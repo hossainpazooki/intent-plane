@@ -785,3 +785,171 @@ func TestTerminalSeparation(t *testing.T) {
 		}
 	}
 }
+
+// --- (g) thin-spec defense (CONTRACT-INTERFACE B2/B2b) ----------------------
+
+// eventDetail returns the Detail of the first event of the given type, and
+// whether one exists.
+func eventDetail(events []audit.Event, typ string) (string, bool) {
+	for _, e := range events {
+		if e.Type == typ {
+			return e.Detail, true
+		}
+	}
+	return "", false
+}
+
+// TestFailClosedEmptyCriteria pins the property, not the seat: a resolved spec
+// with zero criteria never reaches ACHIEVED, regardless of where resolution
+// happens. "No criterion failed" must never be satisfied by "no criterion
+// existed". The refusal record witnesses WHICH signed spec was thin (the
+// UNEVALUABLE detail binds the claimed intent_spec_hash; a blank hash yields
+// the bare "empty-criteria:" — witnessing that none was even claimed), the
+// scorer is never consulted, and nothing settles. Covers nil and the empty
+// slice — Go distinguishes them, the gate must not.
+func TestFailClosedEmptyCriteria(t *testing.T) {
+	cases := []struct {
+		name       string
+		crits      []intent.Criterion
+		specHash   string
+		wantDetail string
+	}{
+		{"nil-criteria", nil, "spec-thin", "empty-criteria:spec-thin"},
+		{"empty-slice", []intent.Criterion{}, "spec-thin", "empty-criteria:spec-thin"},
+		{"no-spec-hash-claimed", nil, "", "empty-criteria:"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			s := newScorer()
+			feed := openFeed(t)
+			g := New(s, feed, idempotency.NewStore())
+
+			i := mkIntent("seed-thin-"+tc.name, "key-thin-"+tc.name, tc.specHash, tc.crits...)
+			r := mustAuthorize(t, g, i)
+
+			if r.Terminal == lifecycle.Achieved {
+				t.Fatal("a spec with zero criteria must never reach ACHIEVED (vacuous grant)")
+			}
+			if r.Terminal != lifecycle.Failed {
+				t.Fatalf("terminal = %q, want FAILED", r.Terminal)
+			}
+			if r.Reason != "unevaluable:empty-criteria" {
+				t.Fatalf("reason = %q, want %q", r.Reason, "unevaluable:empty-criteria")
+			}
+			if r.AchievedSeq != 0 {
+				t.Fatalf("AchievedSeq = %d, want 0 on FAILED", r.AchievedSeq)
+			}
+			detail, ok := eventDetail(r.Events, "UNEVALUABLE")
+			if !ok {
+				t.Fatalf("expected an UNEVALUABLE event, got %+v", r.Events)
+			}
+			if detail != tc.wantDetail {
+				t.Fatalf("UNEVALUABLE detail = %q, want %q (the refusal must witness the thin spec's hash)", detail, tc.wantDetail)
+			}
+			if hasEventType(r.Events, "SCORED") {
+				t.Fatalf("no criterion exists, so nothing may be SCORED: %+v", r.Events)
+			}
+			if len(s.Calls) != 0 {
+				t.Fatalf("scorer consulted %d time(s) for a zero-criteria spec, want 0", len(s.Calls))
+			}
+			assertNoSettlement(t, feed, i)
+		})
+	}
+}
+
+// scorerFunc adapts a function to scoring.Scorer, for probing the gate with
+// scorer behavior no in-repo scorer exhibits.
+type scorerFunc func(c intent.Criterion, phase intent.Phase) scoring.Score
+
+func (f scorerFunc) Score(_ context.Context, _ intent.Intent, c intent.Criterion, phase intent.Phase) scoring.Score {
+	return f(c, phase)
+}
+
+// TestFailClosedOutOfDomainScore: scoring.Score is an open int; a Scorer
+// returning a value outside the tri-state domain must fail CLOSED at
+// declaration exactly as at the dispatch edge (which already refuses any
+// non-Pass by exact match). Before the fix, an out-of-domain value fell
+// through the declaration switch as an implicit pass, yielding the
+// self-contradictory log "SCORED <name>:UNEVALUABLE" followed by ACHIEVED
+// (found by the 2026-08-02 skeptic pass).
+func TestFailClosedOutOfDomainScore(t *testing.T) {
+	feed := openFeed(t)
+	rogue := scorerFunc(func(c intent.Criterion, phase intent.Phase) scoring.Score {
+		return scoring.Score(3) // out-of-domain: renders "UNEVALUABLE", is none of Pass/Fail/Unevaluable
+	})
+	g := New(rogue, feed, idempotency.NewStore())
+
+	i := mkIntent("seed-rogue", "key-rogue", "spec-rogue", crit("balance", intent.Stable))
+	r := mustAuthorize(t, g, i)
+
+	if r.Terminal == lifecycle.Achieved {
+		t.Fatal("an out-of-domain score must never reach ACHIEVED (implicit-pass fall-through)")
+	}
+	if r.Terminal != lifecycle.Failed {
+		t.Fatalf("terminal = %q, want FAILED", r.Terminal)
+	}
+	if r.Reason != "unevaluable:balance" {
+		t.Fatalf("reason = %q, want %q (out-of-domain scores are unevaluable-shaped)", r.Reason, "unevaluable:balance")
+	}
+	if !hasEventType(r.Events, "UNEVALUABLE") {
+		t.Fatalf("expected an UNEVALUABLE event, got %+v", r.Events)
+	}
+	assertNoSettlement(t, feed, i)
+}
+
+// TestFailClosedInvalidVolatility (B2b): a criterion whose volatility is
+// neither "stable" nor "volatile" is an unknown kind and denies explicitly at
+// resolution (P7) — a typo'd "volatile" must not silently become stable and
+// skip the dispatch-edge re-verify. The refusal happens before any scoring
+// (spec-shape validation, like empty-criteria). Honesty bound: this closes the
+// typo case only; a criterion semantically mislabeled stable is
+// authoring/attestation territory the string cannot reveal.
+func TestFailClosedInvalidVolatility(t *testing.T) {
+	cases := []struct {
+		name string
+		vol  intent.Volatility
+	}{
+		{"typo", intent.Volatility("volatil")},
+		{"blank", intent.Volatility("")},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			s := newScorer()
+			feed := openFeed(t)
+			g := New(s, feed, idempotency.NewStore())
+
+			i := mkIntent("seed-vol-"+tc.name, "key-vol-"+tc.name, "spec-vol",
+				crit("balance", intent.Stable),
+				intent.Criterion{Name: "fx-rate", Threshold: 0.5, Volatility: tc.vol},
+			)
+			r := mustAuthorize(t, g, i)
+
+			if r.Terminal == lifecycle.Achieved {
+				t.Fatal("an unknown volatility must never reach ACHIEVED (it would silently skip the dispatch-edge re-verify)")
+			}
+			if r.Terminal != lifecycle.Failed {
+				t.Fatalf("terminal = %q, want FAILED", r.Terminal)
+			}
+			if r.Reason != "unevaluable:invalid-volatility:fx-rate" {
+				t.Fatalf("reason = %q, want %q", r.Reason, "unevaluable:invalid-volatility:fx-rate")
+			}
+			if r.AchievedSeq != 0 {
+				t.Fatalf("AchievedSeq = %d, want 0 on FAILED", r.AchievedSeq)
+			}
+			detail, ok := eventDetail(r.Events, "UNEVALUABLE")
+			if !ok {
+				t.Fatalf("expected an UNEVALUABLE event, got %+v", r.Events)
+			}
+			want := "invalid-volatility:fx-rate:" + string(tc.vol)
+			if detail != want {
+				t.Fatalf("UNEVALUABLE detail = %q, want %q (the record witnesses what arrived)", detail, want)
+			}
+			if len(s.Calls) != 0 {
+				t.Fatalf("scorer consulted %d time(s) before the spec was validly resolved, want 0", len(s.Calls))
+			}
+			assertNoSettlement(t, feed, i)
+		})
+	}
+}

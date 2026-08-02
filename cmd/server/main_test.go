@@ -388,6 +388,108 @@ func TestZeroConfigRefusesEverything(t *testing.T) {
 	}
 }
 
+// TestEmptyCriteriaRefusedOverWire (CONTRACT-INTERFACE B2): a declaration whose
+// spec carries zero criteria terminates FAILED with the pinned reason — for a
+// `"criteria": []` body AND a body omitting the field entirely (both decode to
+// zero criteria; the gate must not distinguish them). Deliberately run on a
+// ZERO-CONFIG server with no force_scores: before the thin-spec defense, this
+// exact request ACHIEVEs on the server that "authorizes nothing" — the scorer
+// is never consulted, so no fail-closed layer ever fires.
+func TestEmptyCriteriaRefusedOverWire(t *testing.T) {
+	t.Setenv("TIC_SCORER_URL", "")
+	ts := boot(t, t.TempDir())
+
+	emptyCriteria := fmt.Sprintf(`{
+		"episode_seed": %q,
+		"idempotency_key": %q,
+		"rule_artifact_hash": "rule-hash-1",
+		"intent_spec_hash": "spec-thin-wire",
+		"spec": {
+			"action_class": "payment",
+			"idempotency_scope": "payer",
+			"criteria": []
+		}
+	}`, "seed-thin-wire-a", "key-thin-wire-a")
+	absentCriteria := fmt.Sprintf(`{
+		"episode_seed": %q,
+		"idempotency_key": %q,
+		"rule_artifact_hash": "rule-hash-1",
+		"intent_spec_hash": "spec-thin-wire",
+		"spec": {
+			"action_class": "payment",
+			"idempotency_scope": "payer"
+		}
+	}`, "seed-thin-wire-b", "key-thin-wire-b")
+
+	for name, body := range map[string]string{
+		"empty-criteria-array": emptyCriteria,
+		"criteria-field-absent": absentCriteria,
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp := ts.postIntent(body)
+			if resp.Terminal == string(lifecycle.Achieved) {
+				t.Fatal("a zero-criteria declaration must never reach ACHIEVED (vacuous grant over the wire)")
+			}
+			if resp.Terminal != string(lifecycle.Failed) {
+				t.Fatalf("terminal = %q, want %q", resp.Terminal, lifecycle.Failed)
+			}
+			if resp.Reason != "unevaluable:empty-criteria" {
+				t.Fatalf("reason = %q, want %q", resp.Reason, "unevaluable:empty-criteria")
+			}
+			if resp.AchievedSeq != 0 {
+				t.Fatalf("achieved_seq = %d, want absent/0 on FAILED", resp.AchievedSeq)
+			}
+		})
+	}
+	if ev := ts.getEvents("?type=ACHIEVED"); len(ev.Events) != 0 {
+		t.Fatalf("thin-spec declarations must leave no ACHIEVED record, got %+v", ev.Events)
+	}
+}
+
+// TestInvalidVolatilityRefusedOverWire (CONTRACT-INTERFACE B2b): a criterion
+// with an unknown volatility string — a typo, or the field omitted (decodes to
+// "") — is refused with the pinned reason instead of being silently treated as
+// stable and skipping the dispatch-edge re-verify.
+func TestInvalidVolatilityRefusedOverWire(t *testing.T) {
+	t.Setenv("TIC_SCORER_URL", "")
+	ts := boot(t, t.TempDir())
+
+	body := func(seed, key, volatilityJSON string) string {
+		return fmt.Sprintf(`{
+			"episode_seed": %q,
+			"idempotency_key": %q,
+			"rule_artifact_hash": "rule-hash-1",
+			"intent_spec_hash": "spec-vol-wire",
+			"spec": {
+				"action_class": "payment",
+				"idempotency_scope": "payer",
+				"criteria": [
+					{"name": "balance", "threshold": 1.0%s}
+				]
+			}
+		}`, seed, key, volatilityJSON)
+	}
+
+	cases := map[string]string{
+		"typo":    body("seed-vol-wire-a", "key-vol-wire-a", `, "volatility": "volatil"`),
+		"omitted": body("seed-vol-wire-b", "key-vol-wire-b", ``),
+	}
+	for name, b := range cases {
+		t.Run(name, func(t *testing.T) {
+			resp := ts.postIntent(b)
+			if resp.Terminal != string(lifecycle.Failed) {
+				t.Fatalf("terminal = %q, want %q", resp.Terminal, lifecycle.Failed)
+			}
+			if resp.Reason != "unevaluable:invalid-volatility:balance" {
+				t.Fatalf("reason = %q, want %q", resp.Reason, "unevaluable:invalid-volatility:balance")
+			}
+		})
+	}
+	if ev := ts.getEvents("?type=ACHIEVED"); len(ev.Events) != 0 {
+		t.Fatalf("invalid-volatility declarations must leave no ACHIEVED record, got %+v", ev.Events)
+	}
+}
+
 // TestLiveScorerDrivesTerminal (CONTRACT-SCORER §S.3): with no force_scores and
 // TIC_SCORER_URL pointing at an httptest scorer, the terminal follows the
 // scorer's answers — and the calls actually cross the HTTP seam.

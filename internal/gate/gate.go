@@ -54,6 +54,12 @@ func New(s scoring.Scorer, feed *durable.Store, store *idempotency.Store) *Gate 
 //
 //  1. DECLARED. Empty idempotency key -> append UNEVALUABLE, FAILED with reason
 //     "unevaluable:absent-key". Return.
+//  1b. Thin-spec defense (CONTRACT-INTERFACE B2/B2b): zero criteria -> append
+//     UNEVALUABLE "empty-criteria:<intent_spec_hash>", FAILED
+//     "unevaluable:empty-criteria". A criterion whose volatility is neither
+//     "stable" nor "volatile" -> append UNEVALUABLE
+//     "invalid-volatility:<name>:<raw>", FAILED
+//     "unevaluable:invalid-volatility:<name>". Both refuse before any scoring.
 //  2. RESOLVING -> ACTIVE -> VERIFYING, each a logged, IsValidTransition-checked
 //     transition.
 //  3. Declaration scoring for EACH criterion in slice order (never map order):
@@ -133,6 +139,35 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 		return terminal(lifecycle.Failed, "unevaluable:absent-key"), nil
 	}
 
+	// Step 1b: thin-spec defense (CONTRACT-INTERFACE B2/B2b). Spec resolution
+	// today happens at declaration decode, so the spec-shape checks live here
+	// and move with resolution if resolution ever moves. A spec with zero
+	// criteria is refused: "no criterion failed" must never be satisfied by
+	// "no criterion existed" (the scorer-side twin of this guard is the
+	// hashless-verify refusal in scorer/src/tis/resolver.py). The UNEVALUABLE
+	// detail binds the claimed spec hash so the refusal record witnesses WHICH
+	// signed spec was thin; a blank hash yields the bare "empty-criteria:",
+	// witnessing that none was claimed.
+	if len(i.Spec.Criteria) == 0 {
+		if err := emit("UNEVALUABLE", "empty-criteria:"+i.IntentSpecHash); err != nil {
+			return partial(), err
+		}
+		return terminal(lifecycle.Failed, "unevaluable:empty-criteria"), nil
+	}
+	// An unknown volatility is an unknown kind and denies explicitly: a typo'd
+	// "volatile" must not silently become stable and skip the dispatch-edge
+	// re-verify. This closes the typo case only — a criterion semantically
+	// mislabeled stable is authoring/attestation territory the string cannot
+	// reveal.
+	for _, c := range i.Spec.Criteria {
+		if c.Volatility != intent.Stable && c.Volatility != intent.Volatile {
+			if err := emit("UNEVALUABLE", "invalid-volatility:"+c.Name+":"+string(c.Volatility)); err != nil {
+				return partial(), err
+			}
+			return terminal(lifecycle.Failed, "unevaluable:invalid-volatility:"+c.Name), nil
+		}
+	}
+
 	// Step 2: DECLARED -> RESOLVING -> ACTIVE -> VERIFYING.
 	for _, next := range []lifecycle.State{lifecycle.Resolving, lifecycle.Active, lifecycle.Verifying} {
 		if err := transition(next, ""); err != nil {
@@ -150,7 +185,17 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 			return partial(), err
 		}
 		switch score {
-		case scoring.Unevaluable:
+		case scoring.Pass:
+			// Scored Pass — nothing to collect.
+		case scoring.Fail:
+			failed = append(failed, c.Name)
+		default:
+			// Unevaluable AND any out-of-domain Score value fail closed alike:
+			// the scoring domain is closed tri-state, so an unknown score is
+			// unevaluable-shaped absence. The dispatch edge already refuses any
+			// non-Pass by exact match; this mirrors that semantics at
+			// declaration (before it, an out-of-domain value fell through as an
+			// implicit pass — "SCORED x:UNEVALUABLE" followed by ACHIEVED).
 			reason := "unevaluable:" + c.Name
 			if err := emit("UNEVALUABLE", c.Name); err != nil {
 				return partial(), err
@@ -159,8 +204,6 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 				return partial(), err
 			}
 			return terminal(lifecycle.Failed, reason), nil
-		case scoring.Fail:
-			failed = append(failed, c.Name)
 		}
 	}
 	if len(failed) > 0 {
