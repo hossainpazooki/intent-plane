@@ -8,9 +8,15 @@ exactly once to a durable append-only event feed; the gate itself settles nothin
 Nothing moves until the gate says so.
 
 The gate reads no artifacts — criteria, thresholds, and the idempotency key arrive as
-params. Scoring is fail-closed: any `Fail` or `Unevaluable` denies authorization, and
-`Unevaluable` never collapses into a pass. Volatile facts (balance, reachability) are
-re-checked at the dispatch edge by the same authority, immediately before authorizing.
+params from the **declarant** (the caller declaring the intent; the roles of the plane
+are declarant / author / attester / gate, per `CONTRACT-INTERFACE.md` §I.0). Scoring is
+fail-closed: any `Fail` or `Unevaluable` denies authorization, and `Unevaluable` never
+collapses into a pass — and the refusal is *shape-deep*: a spec with **zero criteria**
+or an **unknown volatility** refuses at resolution (`unevaluable:empty-criteria`,
+`unevaluable:invalid-volatility:<name>`) instead of vacuously granting, so "no
+criterion failed" is never satisfied by "no criterion existed". Volatile facts
+(balance, reachability) are re-checked at the dispatch edge by the same authority,
+immediately before authorizing.
 Every run is reconstructable from a logical-clock event log and replays byte-identically;
 every event is also mirrored (fsync-per-append) to a durable feed that external
 consumers poll by cursor (`GET /v2/events?since=`).
@@ -31,7 +37,9 @@ enforces it.
 flowchart TD
     D[DECLARED] -->|key required| K{idempotency<br/>key present?}
     K -->|no — absent key| F[FAILED]
-    K -->|yes| R[RESOLVING] --> A[ACTIVE] --> V[VERIFYING]
+    K -->|yes| TS{spec shape<br/>criteria non-empty ·<br/>volatility known?}
+    TS -->|thin or malformed — unevaluable| F
+    TS -->|well-formed| R[RESOLVING] --> A[ACTIVE] --> V[VERIFYING]
     V -->|criterion failed / unevaluable| F
     V -->|all criteria pass| VR{volatile<br/>re-check}
     VR -->|fact drifted| FD[FAILED_AT_DISPATCH]
@@ -44,7 +52,7 @@ flowchart TD
     classDef good fill:#86efac,stroke:#15803d,stroke-width:2px,color:#111827;
     classDef bad fill:#fca5a5,stroke:#b91c1c,stroke-width:2px,color:#111827;
     class D,R,A,V,VR neutral;
-    class K,IDEM idem;
+    class K,TS,IDEM idem;
     class ACH good;
     class F,FD bad;
 ```
@@ -104,6 +112,28 @@ The amber ledger is the consumer-side twin of the amber checkpoints above: the
 same declared key that gates dispatch keys the settlement ledger, so at-most-once
 holds end to end.
 
+## The premise, mapped to code (clause → enforcement)
+
+The plane's premise clauses (P1–P7, from the intent-plane spec; normative role
+vocabulary in `CONTRACT-INTERFACE.md` §I.0) with the code that enforces each —
+and an honest list of what is **asserted, not enforced**. Line numbers are as
+of the CONTRACT-INTERFACE amendment commit; symbols outlive lines.
+
+| Clause | Status | Enforcement |
+|---|---|---|
+| **P1** one signed object — what the attester signed is what the gate executes | **asserted, not enforced** | Criteria arrive as declarant-supplied params (`cmd/server/main.go:173` → `handleIntents`); the spec hashes ride opaquely (`internal/gate/gate.go` ACHIEVED record). Closer: the resolver-extraction slice (`docs/ROADMAP.md`). |
+| **P2** artifacts are the only crossings | enforced gate-side | Four routes only (`cmd/server/main.go:242` `newMux`) + the durable feed; package set and import adjacency pinned mechanically (`internal/contractcheck/boundary_test.go` `TestImportBoundary`). |
+| **P3** authority is key possession | **asserted, not enforced** | tic holds no signing keys; author/gate role separation is deployment-graph territory (ROADMAP R1/R2 — do not claim "enforced" before R2). |
+| **P4** fail-closed twice | enforced | Tri-state scoring, every transport/decode/non-2xx error ⇒ `Unevaluable` (`internal/scoring/scorer.go:70`); dispatch-edge re-verify (`internal/gate/gate.go:209` step 4a); distinct `FAILED_AT_DISPATCH` terminal (`internal/lifecycle/transitions.go`). |
+| **P5** one byte-exact event | enforced | The single ACHIEVED event and its durable record are one emit (`internal/gate/gate.go:247` step 5); byte-identity pinned by `TestDeterminismReplay`. |
+| **P6** abstention is a success state | enforced (gate substrate) | `Unevaluable` is a first-class score, logged distinctly, never a pass; human-approval-criteria routing is authoring-plane design (not this repo). |
+| **P7** unevaluable-shaped absence | enforced | Empty criteria and unknown volatility refuse at resolution (`internal/gate/gate.go:142` step 1b, `TestFailClosedEmptyCriteria` / `TestFailClosedInvalidVolatility`); absent key refuses at declaration; unknown scorer result strings ⇒ `Unevaluable` (`internal/scoring/scorer.go:110`). Bounds: the *thinned* set (fewer criteria than the source requires) is ATLAS-side; *semantic* volatility mislabeling is authoring/attestation-side. |
+
+Known production-posture gaps, recorded rather than hidden (`docs/ROADMAP.md`):
+`force_scores` is a wire-reachable scoring bypass (documented test affordance —
+it qualifies the fail-closed rows above until guarded); the feed read surface is
+unauthenticated by design (emit-and-observe).
+
 ## Layout
 
 | Package | Responsibility |
@@ -116,6 +146,7 @@ holds end to end.
 | `internal/adapter` | **test-only** reference settlement consumer (recompute path in replay tests) |
 | `internal/idempotency` | dispatch-edge key reservation store (in-memory + durable file-backed) |
 | `internal/gate` | the authorization engine + §12 acceptance tests |
+| `internal/contractcheck` | test-only: pins the import-graph boundary (B1) and the role vocabulary (W1) per `CONTRACT-INTERFACE.md` |
 | `cmd/server` | HTTP shell: `POST /v2/intents`, `GET /v2/events`, `GET /v2/intents/{id}/events`, `GET /healthz`; state under `TIC_DATA_DIR`; live scorer from `TIC_SCORER_URL` (unset = refuse everything) |
 | `scorer/` | the Python resolver+scorer service (`POST /ml/evaluate`, FastAPI) — see `scorer/README.md` |
 | `contract/scorer/` | golden wire fixtures — the byte-level seam both sides test against |
