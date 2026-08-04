@@ -3,7 +3,7 @@
 *.exe
 
 # scorer (Python service)
-scorer/.venv/
+core/scorer/.venv/
 __pycache__/
 *.egg-info/
 .pytest_cache/
