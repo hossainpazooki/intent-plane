@@ -1,3 +1,3 @@
-module github.com/pazooki/treasury-intent-controller
+module github.com/pazooki/intent-plane
 
 go 1.26

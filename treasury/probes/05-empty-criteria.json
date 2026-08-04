@@ -1,0 +1,11 @@
+{
+  "episode_seed": "quickstart-payment-005",
+  "idempotency_key": "pay-2026-08-alpha-005",
+  "rule_artifact_hash": "",
+  "intent_spec_hash": "demo-spec-hash-005",
+  "spec": {
+    "action_class": "payment",
+    "criteria": [],
+    "idempotency_scope": "payer"
+  }
+}
