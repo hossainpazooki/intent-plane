@@ -9,3 +9,4 @@ instead of trusting them.
 |---|---|---|
 | [2026-07-13-atlas-treasury-payment-loop.md](2026-07-13-atlas-treasury-payment-loop.md) | tic + RRE + COMPASS | reader slice merged, ADR-0022/PR #14 merged, Stage C(b) at PR #7, full loop probed green live; next = merge #7, KV ledger, extraction slice |
 | [2026-08-02-intent-plane-gate-interface.md](2026-08-02-intent-plane-gate-interface.md) | tic | thin-spec defense (empty-criteria + volatility, red-first), boundary+vocab gates, CONTRACT-INTERFACE, P1 falsified in pitch register; commits pending operator |
+| [2026-08-04-intent-plane-repositioning.md](2026-08-04-intent-plane-repositioning.md) | tic -> intent-plane | core/treasury split, one CONTRACT.md, neutral core; 7 acceptance lanes green (WSL wheel 47/0); ALL uncommitted on `restructure/intent-plane`; commit blocks + GitHub rename = operator |
