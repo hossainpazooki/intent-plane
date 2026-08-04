@@ -5,7 +5,33 @@ the plane's gate disposes — a deterministic core that decides whether a
 declared intent is authorized, holds the sole authority to emit `ACHIEVED`
 (written exactly once to a durable append-only feed), and never lets
 *unevaluable* collapse into a pass. Nothing crosses the plane until the gate
-says so.
+says so — and everything the gate decides is recorded to be **re-derived
+later by someone who does not trust it**.
+
+**If you answer for agent actions after the fact** — audit, compliance, model
+risk, a counterparty's diligence — this repo was built for your examination,
+not just its own operation. Every decision leaves a record designed for
+independent recomputation: a per-intent event log on a logical clock (no
+wallclock anywhere), a trajectory hash over a length-prefixed byte encoding
+with **no JSON canonicalization to argue about**, exactly one durable
+`ACHIEVED` record per authorized action, and byte-frozen wire fixtures that
+pin the cross-language seam. From the feed alone (`GET /v2/events?since=`)
+you can re-derive the hashes, replay the lifecycle against the closed
+transition graph, and count the grants — in your own language, against your
+own copy, with no call into this code. Stated honestly: today that proves a
+record is *self-consistent and its hashes recompute*; what it cannot yet
+prove is listed below rather than hidden (the premise table's
+**asserted, not enforced** rows, and `docs/ROADMAP.md`).
+
+**If you own how your agents call tools** — the platform team wrapping an
+agent runtime — you embed the gate once at the framework layer and every
+agent inherits it: declare the intent, await the terminal (the synchronous
+`POST /v2/intents` response *is* the terminal — no polling state machine to
+build), proceed on `ACHIEVED` or surface the refusal. Refusal reasons are a
+**closed, machine-parseable set** pinned by contract (`CONTRACT.md` §3.3 —
+new cause classes must amend the table first), so the integration is a switch
+over stable strings; settlement and observability come from polling the
+durable feed by cursor, never from trusting the synchronous response.
 
 The gate reads no artifacts — criteria, thresholds, and the idempotency key arrive as
 params from the **declarant** (the caller declaring the intent; the roles of the plane
@@ -17,9 +43,6 @@ or an **unknown volatility** refuses at resolution (`unevaluable:empty-criteria`
 criterion failed" is never satisfied by "no criterion existed". Volatile facts
 are re-checked at the dispatch edge by the same authority, immediately before
 authorizing.
-Every run is reconstructable from a logical-clock event log and replays byte-identically;
-every event is also mirrored (fsync-per-append) to a durable feed that external
-consumers poll by cursor (`GET /v2/events?since=`).
 
 ### The distinctive feature — exactly-once *by construction*
 
