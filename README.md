@@ -10,22 +10,19 @@ later by someone who does not trust it**.
 
 ```mermaid
 flowchart LR
-    subgraph RT["agent runtime — the platform team embeds once"]
-        AG["agent proposes"] --> SDK["framework layer<br/>declare · await terminal ·<br/>proceed or surface"]
-    end
-    SDK -->|"POST /v2/intents"| G["gate<br/>sole ACHIEVED authority<br/>fail-closed · deterministic"]
-    G -->|"synchronous terminal:<br/>ACHIEVED or a closed refusal set"| SDK
-    G -->|"exactly one durable record<br/>per authorized action"| FEED[("append-only feed<br/>fsync per append · cursor seq")]
-    FEED -->|"poll by cursor —<br/>settle only from observed ACHIEVED"| S["settlement consumer<br/>at-most-once ledger"]
-    FEED -->|"re-derive hashes · replay lifecycle ·<br/>count grants — no trust in the gate"| V["verifier<br/>audit · compliance · model risk"]
+    A["agent declares<br/>an intent"] --> G{"gate scores it<br/>fail-closed"}
+    G -->|"all criteria pass ·<br/>idempotency key fresh"| ACH["ACHIEVED<br/>exactly one durable record"]
+    G -->|"any fail · any unevaluable ·<br/>duplicate key · thin spec"| REF["refused<br/>no record — nothing settles"]
+    ACH -->|"observed from the feed,<br/>never from a callback"| S["settle / re-verify"]
 
     classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
-    classDef durable fill:#93c5fd,stroke:#1d4ed8,stroke-width:2px,color:#111827;
-    classDef star fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
-    class AG,SDK,G,S neutral;
-    class FEED durable;
-    class V star;
-    style RT fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+    classDef idem fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
+    classDef good fill:#86efac,stroke:#15803d,stroke-width:2px,color:#111827;
+    classDef bad fill:#fca5a5,stroke:#b91c1c,stroke-width:2px,color:#111827;
+    class A,S neutral;
+    class G idem;
+    class ACH good;
+    class REF bad;
 ```
 
 **If you answer for agent actions after the fact** — audit, compliance, model
@@ -52,6 +49,26 @@ build), proceed on `ACHIEVED` or surface the refusal. Refusal reasons are a
 new cause classes must amend the table first), so the integration is a switch
 over stable strings; settlement and observability come from polling the
 durable feed by cursor, never from trusting the synchronous response.
+
+```mermaid
+flowchart LR
+    subgraph RT["agent runtime — the platform team embeds once"]
+        AG["agent proposes"] --> SDK["framework layer<br/>declare · await terminal ·<br/>proceed or surface"]
+    end
+    SDK -->|"POST /v2/intents"| G["gate<br/>sole ACHIEVED authority<br/>fail-closed · deterministic"]
+    G -->|"synchronous terminal:<br/>ACHIEVED or a closed refusal set"| SDK
+    G -->|"exactly one durable record<br/>per authorized action"| FEED[("append-only feed<br/>fsync per append · cursor seq")]
+    FEED -->|"poll by cursor —<br/>settle only from observed ACHIEVED"| S["settlement consumer<br/>at-most-once ledger"]
+    FEED -->|"re-derive hashes · replay lifecycle ·<br/>count grants — no trust in the gate"| V["verifier<br/>audit · compliance · model risk"]
+
+    classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
+    classDef durable fill:#93c5fd,stroke:#1d4ed8,stroke-width:2px,color:#111827;
+    classDef star fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
+    class AG,SDK,G,S neutral;
+    class FEED durable;
+    class V star;
+    style RT fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+```
 
 The gate reads no artifacts — criteria, thresholds, and the idempotency key arrive as
 params from the **declarant** (the caller declaring the intent; the roles of the plane
