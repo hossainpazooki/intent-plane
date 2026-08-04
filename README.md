@@ -88,8 +88,9 @@ a first-class gate criterion** — not adapter-local dedup logic. The key is **r
 (an absent key is unevaluable and fails closed) and is **reserved at the dispatch edge**.
 A near-duplicate — same key, one changed field, hence a *different* intent hash —
 **collides on the key and is refused** (`FAILED_AT_DISPATCH`). So at-most-once holds on
-the settlement log by construction, not by assertion. The amber nodes below are the two
-idempotency checkpoints; the key's governance as a signed, expert-attested criterion
+the settlement log by construction, not by assertion. The amber nodes below are the
+gate's checkpoints — the two idempotency checks flanking the spec-shape
+check; the key's governance as a signed, expert-attested criterion
 lives in the upstream ATLAS `IntentSpec` artifact — this gate consumes and
 enforces it.
 
@@ -219,7 +220,21 @@ Expected final line: `RESULT: 6/6 probes passed`. The narrative, the probe
 ladder, and the extended demonstration (signed-artifact verification,
 settlement consumption) are documented in `treasury/README.md`.
 
-## Layout
+## Project structure
+
+```
+intent-plane/
+├── CONTRACT.md            # the single current-state contract (§1–§10)
+├── core/                  # the plane itself — carries no domain vocabulary
+│   │                      #   (mechanically gated: TestCoreNeutrality)
+│   ├── cmd/server/        # HTTP shell — the 4 routes, INTENT_* env
+│   ├── internal/          # gate · lifecycle · audit · durable feed · scoring ·
+│   │                      #   idempotency · contractcheck (test-only pins)
+│   ├── scorer/            # Python resolver+scorer service — SCORER_* env
+│   └── contract/scorer/   # golden wire fixtures — byte-frozen, cross-language
+├── treasury/              # demonstration deployment — facts, probes, quickstarts
+└── docs/                  # ROADMAP, handoff briefs, learnings ledger, design docs
+```
 
 | Path | Responsibility |
 |---|---|
