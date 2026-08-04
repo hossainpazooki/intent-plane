@@ -1,0 +1,2 @@
+# WSL runs treasury/quickstart.sh; a CRLF checkout breaks its #!/bin/sh line.
+*.sh text eol=lf
