@@ -8,6 +8,26 @@ declared intent is authorized, holds the sole authority to emit `ACHIEVED`
 says so — and everything the gate decides is recorded to be **re-derived
 later by someone who does not trust it**.
 
+```mermaid
+flowchart LR
+    subgraph RT["agent runtime — the platform team embeds once"]
+        AG["agent proposes"] --> SDK["framework layer<br/>declare · await terminal ·<br/>proceed or surface"]
+    end
+    SDK -->|"POST /v2/intents"| G["gate<br/>sole ACHIEVED authority<br/>fail-closed · deterministic"]
+    G -->|"synchronous terminal:<br/>ACHIEVED or a closed refusal set"| SDK
+    G -->|"exactly one durable record<br/>per authorized action"| FEED[("append-only feed<br/>fsync per append · cursor seq")]
+    FEED -->|"poll by cursor —<br/>settle only from observed ACHIEVED"| S["settlement consumer<br/>at-most-once ledger"]
+    FEED -->|"re-derive hashes · replay lifecycle ·<br/>count grants — no trust in the gate"| V["verifier<br/>audit · compliance · model risk"]
+
+    classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
+    classDef durable fill:#93c5fd,stroke:#1d4ed8,stroke-width:2px,color:#111827;
+    classDef star fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
+    class AG,SDK,G,S neutral;
+    class FEED durable;
+    class V star;
+    style RT fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+```
+
 **If you answer for agent actions after the fact** — audit, compliance, model
 risk, a counterparty's diligence — this repo was built for your examination,
 not just its own operation. Every decision leaves a record designed for
