@@ -15,8 +15,9 @@ The plane is a domain-agnostic authorization layer: a declarant declares an
 intent, the gate decides deterministically whether it is authorized, and the
 decision is emitted exactly once to a durable append-only feed. The gate settles
 nothing itself (**emit-and-observe**); a downstream consumer settles from the
-feed. The `treasury/` directory in this repo is a demonstration deployment of
-the plane, not part of it.
+feed. The demonstration deployment (`treasury/` in the testing monorepo
+`treasury-intent-controller`) exercises the plane from outside it — this repo
+is the SDK alone.
 
 ---
 
@@ -43,12 +44,13 @@ amendment's seating):** the core is a minimal SDK for agentic deployments and
 hosts NO human-authority seats. `core/` is the gate; `plane/` is the boundary
 artifact — envelope, payload, spec store, resolver, **verification only**:
 the core verifies what applications sign. The seats live in the APPLICATION
-built on the core — in this repo, `treasury/`: the author chassis is
-`treasury/authoring`; the attester's seat — the only production importer of
-`treasury/authority`'s key operations — is `treasury/control` (attest,
-publish, revoke, promote); `treasury/authority` holds every private-key
-operation. Declarants are external agents on the wire. The core structurally
-cannot sign and never imports `treasury/*` (`TestImportBoundary`,
+built on the core — the reference application is the testing monorepo
+(`treasury-intent-controller`), whose `treasury/` tree seats them: the author
+chassis is `treasury/authoring`; the attester's seat — the only production
+importer of `treasury/authority`'s key operations — is `treasury/control`
+(attest, publish, revoke, promote); `treasury/authority` holds every
+private-key operation. Declarants are external agents on the wire. The core structurally
+cannot sign and never imports an application package (`TestImportBoundary`,
 `TestKeyPossessionBoundary`): "layers bind to the artifact, never to each
 other" is the pinned import graph.
 
@@ -462,10 +464,11 @@ the **stores are never per-request**).
 ### §2.6 Spec resolution — the plane (2026-08-04 amendment)
 
 The signed artifact and its stores live in the top-level `plane` package
-(core-side, verification only); the application seats `treasury/control`
-(attest, publish, revoke, promote — the ONLY production importer of
-`treasury/authority`) and `treasury/authoring` (drafts; holds no keys by
-import graph, `TestKeyPossessionBoundary`) operate on it.
+(core-side, verification only); the application seats operate on it from
+outside the SDK (reference: `treasury/control` — attest, publish, revoke,
+promote, the ONLY production importer of `treasury/authority` — and
+`treasury/authoring`, which holds no keys by import graph, in the testing
+monorepo; `TestKeyPossessionBoundary` governs any in-tree instantiation).
 
 **Envelope (DSSE-shaped).** `{"payloadType", "payload" (b64), "signatures":
 [{"keyid", "sig", "key_authority"}]}`. The signature covers
@@ -945,14 +948,15 @@ and order-sensitive.
 ruling:** the CORE owns exactly one tree outside `core/` beside
 `core/cmd/server`: `plane` (envelope, payload, store, resolver —
 verification only), the boundary artifact the gate consumes. The authority
-seats live in the APPLICATION: `treasury/authority` (EVERY private-key
+seats live in the APPLICATION — no application tree ships in this repo; the
+reference instantiation is the testing monorepo
+(`treasury-intent-controller`): `treasury/authority` (every private-key
 operation; production-importable ONLY from `treasury/control`,
 `TestKeyPossessionBoundary`), `treasury/control`
 (attest/publish/revoke/promote), `treasury/authoring` (drafting chassis;
-holds no keys by import graph). Production edges: `core/cmd/server → plane`,
-`treasury/authority → plane`, `treasury/control → {plane,
-treasury/authority}`, `treasury/authoring → plane`. The core never imports
-`treasury/*` — applications depend on the SDK, never the reverse. The
+holds no keys by import graph), each importing only `plane` from the SDK.
+The core never imports an application package — applications depend on the
+SDK, never the reverse. The
 mechanical pin (`boundary_test.go`) is two-part and deliberately asymmetric:
 CORE packages are pinned exactly, by table; application trees are pinned BY
 RULE, never by name — the checks under `core/` carry no application
@@ -990,7 +994,8 @@ Sanctioned test-only extras (edges that exist ONLY in `_test.go` files):
 a core test importing an application tree is a layering violation, not a
 sanctionable extra.
 
-Application trees (rule-pinned, current instantiation `treasury/`): an
+Application trees (rule-pinned; none ship in this repo — the reference
+instantiation is `treasury/` in the testing monorepo): an
 application package may import only `plane` and packages within its own
 tree — never `core/internal/*` or `core/cmd/*`; within any tree, only
 `<tree>/control` may import `<tree>/authority` (`TestKeyPossessionBoundary`).
@@ -1217,8 +1222,8 @@ live fact source is a LATER slice — **do not fake one**. `SCORER_FACTS_JSON`
 carries a criterion → number JSON object; **unset means an EMPTY fact map**, so
 every criterion is `UNEVALUABLE` and the gate refuses everything. That
 fail-closed posture is what a neutral core boots into; a demonstration
-deployment injects its own facts file through the same seam (this repo's
-`treasury/facts.json`). A non-object value is a boot refusal.
+deployment injects its own facts file through the same seam (the testing
+monorepo's `treasury/facts.json`). A non-object value is a boot refusal.
 
 **Resolver, all-or-nothing.** `ArtifactResolver.verify(rule_artifact_hash,
 intent_spec_hash) -> bool`, run via `loop.run_in_executor` — `ke-artifact-py`'s

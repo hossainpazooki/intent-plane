@@ -1,6 +1,0 @@
-{
-  "spec_version": 1,
-  "action_class": "payment",
-  "enforcement_posture": "enforce",
-  "criteria": []
-}

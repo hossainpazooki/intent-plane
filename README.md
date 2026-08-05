@@ -38,7 +38,7 @@ transition graph, and count the grants — in your own language, against your
 own copy, with no call into this code. Stated honestly: today that proves a
 record is *self-consistent and its hashes recompute*; what it cannot yet
 prove is listed below rather than hidden (the premise table's
-**asserted, not enforced** rows, and `docs/ROADMAP.md`).
+**asserted, not enforced** rows, and the ROADMAP in the testing monorepo).
 
 **If you own how your agents call tools** — the platform team wrapping an
 agent runtime — you embed the gate once at the framework layer and every
@@ -99,8 +99,8 @@ A near-duplicate — same key, one changed field, hence a *different* intent has
 the settlement log by construction, not by assertion. The amber nodes below are the
 gate's checkpoints — the two idempotency checks flanking the spec-shape
 check; the key's governance as a signed, expert-attested criterion
-lives in the upstream ATLAS `IntentSpec` artifact — this gate consumes and
-enforces it.
+lives in the attested spec payload (`CONTRACT.md` §2.6, per ADR-0007) — this
+gate consumes and enforces it.
 
 ```mermaid
 flowchart TD
@@ -203,13 +203,13 @@ of the 2026-08-03 repositioning; symbols outlive lines.
 |---|---|---|
 | **P1** one signed object — what the attester signed is what the gate executes | **enforced (gate-side, test key authority)** | The wire has NO criteria field (`core/cmd/server/main.go` `specDTO`; the old shape 400s via `DisallowUnknownFields`). Criteria reach the gate ONLY through §2.6 resolution: ed25519 envelope verification + content-address equality (`plane/store.go` `Resolve`); an unattested hash refuses before any scoring (`gate.go` step 1a3, `TestUnattestedSpecRefuses`). Byte-for-byte is a hash equality (`TestTamperedPayloadRefuses`). Key authority is TEST-GRADE until ADR-0009 (R1). |
 | **P2** artifacts are the only crossings | enforced gate-side | Four routes only (`core/cmd/server/main.go:241` `newMux`) + the durable feed; package set and import adjacency pinned mechanically (`core/internal/contractcheck/boundary_test.go` `TestImportBoundary`). |
-| **P3** authority is key possession | **partially enforced: code graph in-repo; deployment graph asserted** | Key operations live in the APPLICATION, never the SDK: `treasury/authority` is the sole signing seat and only `treasury/control` may import it in production (`TestKeyPossessionBoundary`, a name-free rule — any `<tree>/authority` is importable only from `<tree>/control`); the core imports no application package at all (`TestImportBoundary`), so the gate, the plane artifact, and the drafting chassis structurally cannot reach a signing seam — an import-graph fact, not a review promise. What the graph pins is access to that seam; stdlib crypto stays reachable by any Go code, so "cannot sign at all" is the DEPLOYMENT half (workload identity, R2) and remains asserted; do not claim it. |
+| **P3** authority is key possession | **partially enforced: code graph in-repo; deployment graph asserted** | The SDK contains NO signing seat: this repo ships verification only, and the core imports no application package at all (`TestImportBoundary`). Applications bring their own seats, governed by a name-free rule the moment they live in a tree beside the core: any `<tree>/authority` is importable only from `<tree>/control` (`TestKeyPossessionBoundary`). The reference application (the testing monorepo, `treasury-intent-controller`) seats keys in `treasury/authority` with `treasury/control` as sole importer. What the graph pins is access to a signing seam; stdlib crypto stays reachable by any Go code, so "cannot sign at all" is the DEPLOYMENT half (workload identity, R2) and remains asserted; do not claim it. |
 | **P4** fail-closed twice | enforced | Tri-state scoring, every transport/decode/non-2xx error ⇒ `Unevaluable` (`core/internal/scoring/scorer.go:70`); dispatch-edge re-verify (`core/internal/gate/gate.go:217` step 4a); distinct `FAILED_AT_DISPATCH` terminal (`core/internal/lifecycle/transitions.go`). |
 | **P5** one byte-exact event | enforced | The single ACHIEVED event and its durable record are one emit (`core/internal/gate/gate.go:255` step 5); byte-identity pinned by `TestDeterminismReplay`. |
-| **P6** abstention is a success state | enforced | `Unevaluable` is a first-class score, never a pass; AND the authoring chassis routes deliberately-unquantified obligations to `human_judgment` entries the gate refuses (`unevaluable:human-judgment:<name>`, `TestHumanJudgmentRefuses`) — an invented number cannot replace a human decision. The drafting INTELLIGENCE that fills the authoring seat is not in this repo; the chassis around it is. |
+| **P6** abstention is a success state | enforced | `Unevaluable` is a first-class score, never a pass; AND the authoring chassis routes deliberately-unquantified obligations to `human_judgment` entries the gate refuses (`unevaluable:human-judgment:<name>`, `TestHumanJudgmentRefuses`) — an invented number cannot replace a human decision. The gate-side refusal is what ships here; the authoring chassis that routes obligations into those entries is application-side (reference: the testing monorepo). |
 | **P7** unevaluable-shaped absence | enforced | Empty criteria and unknown volatility refuse at resolution (`core/internal/gate/gate.go:142` step 1b, `TestFailClosedEmptyCriteria` / `TestFailClosedInvalidVolatility`); absent key refuses at declaration; unknown scorer result strings ⇒ `Unevaluable` (`core/internal/scoring/scorer.go:110`). Bounds: the *thinned* set (fewer criteria than the source requires) is ATLAS-side; *semantic* volatility mislabeling is authoring/attestation-side. |
 
-Known production-posture gaps, recorded rather than hidden (`docs/ROADMAP.md`):
+Known production-posture gaps, recorded rather than hidden (`docs/ROADMAP.md` in the testing monorepo, `treasury-intent-controller`):
 `force_scores` is now GUARDED (`INTENT_UNSAFE_FORCE_SCORES=1` at boot, else a
 loud 400) and witnessed (`scorer_id` on every SCORED/RECHECK feed record), but
 remains a total scoring bypass wherever that flag is set; key authority is
@@ -217,24 +217,18 @@ test-grade (envelopes carry `key_authority: "test"`) until ADR-0009 lands; the
 deployment-graph half of P3 (workload identity, R2) is asserted, not built;
 the feed read surface is unauthenticated by design (emit-and-observe).
 
-## See it work — the treasury demonstration
+## See it work — the reference application
 
-The `treasury/` directory is a demonstration deployment of the intent plane:
-payment controls over static facts (a balance, an fx rate). One command boots
-the real gate and the real scorer, then runs a narrated, self-asserting probe
-ladder — the full plane: keygen → attest → publish, then authorization against
-a SIGNED spec, idempotency collision, a binding criterion, an unattested-hash
-refusal, a signed revocation, a live scorer outage (fail-closed), and the
-attested-but-thin refusal (8 probes):
-
-    # Windows
-    powershell -File treasury\quickstart.ps1
-    # Linux / macOS / WSL
-    ./treasury/quickstart.sh
-
-Expected final line: `RESULT: 6/6 probes passed`. The narrative, the probe
-ladder, and the extended demonstration (signed-artifact verification,
-settlement consumption) are documented in `treasury/README.md`.
+This repo is the SDK alone. The demonstration deployment — payment controls
+over static facts, one command booting the real gate and the real scorer
+through a narrated, self-asserting 8-probe ladder (keygen → attest → publish,
+authorization against a SIGNED spec, idempotency collision, a binding
+criterion, an unattested-hash refusal, a signed revocation, a live scorer
+outage, the attested-but-thin refusal) — lives in the testing monorepo,
+`treasury-intent-controller`, under `treasury/`, together with the
+application seats (authority, control, authoring). Clone that repo and run
+its `treasury/quickstart.ps1` (Windows) or `treasury/quickstart.sh` (POSIX);
+expected final line: `RESULT: 8/8 probes passed`.
 
 ## Project structure
 
@@ -248,16 +242,8 @@ intent-plane/
 │   │                      #   idempotency · contractcheck (test-only pins)
 │   ├── scorer/            # Python resolver+scorer service — SCORER_* env
 │   └── contract/scorer/   # golden wire fixtures — byte-frozen, cross-language
-├── plane/                 # the signed artifact: envelope, spec payload, store,
-│                          #   resolver (verification ONLY — the SDK holds no keys)
-├── treasury/              # THE APPLICATION built on the SDK — its seats and its demo:
-│   ├── authority/         #   EVERY private-key operation; only treasury/control
-│   │                      #   may import it (TestKeyPossessionBoundary)
-│   ├── control/           #   attest · publish · revoke · promote (the sole key holder)
-│   ├── authoring/         #   drafting chassis — pins passages, surfaces unknowns,
-│   │                      #   routes judgment calls to humans; holds no keys
-│   └── ...                #   facts, specs, probes, quickstarts
-└── docs/                  # ROADMAP, ADRs, handoff briefs, learnings, research, design docs
+└── plane/                 # the signed artifact: envelope, spec payload, store,
+                           #   resolver (verification ONLY — the SDK holds no keys)
 ```
 
 | Path | Responsibility |
@@ -275,10 +261,6 @@ intent-plane/
 | `core/scorer/` | the Python resolver+scorer service (`POST /ml/evaluate`, FastAPI) — see `core/scorer/README.md` |
 | `core/contract/scorer/` | golden wire fixtures — the byte-level seam both sides test against |
 | `plane/` | the signed artifact: DSSE-shaped envelope, spec payload, content-addressed store, hybrid resolver, revocation tombstones — verification only; with `core/`, this is the whole SDK |
-| `treasury/authority/` | application seat: every private-key operation (keygen, attest, tombstone) — production-importable ONLY from `treasury/control` |
-| `treasury/control/` | application seat, CLI: keygen · root · attest · publish · revoke · promote (promotion = new attestation, new hash) |
-| `treasury/authoring/` | application seat, CLI: deterministic drafting chassis — source pins, named unknowns, human-judgment routing; holds no keys by import graph |
-| `treasury/` | the application built on the SDK: the seats above plus quickstart, specs, probes, facts |
 | `CONTRACT.md` | the plane's contract — see below |
 
 `CONTRACT.md` is the single current-state contract — roles, wire, lifecycle,
@@ -300,14 +282,9 @@ The Python scorer has its own gate (see `core/scorer/README.md`):
 cd core/scorer && .venv/Scripts/python -m pytest   # unit + service matrix + wire fixtures
 ```
 
-And the treasury demonstration doubles as the third gate — a live two-process
-smoke over the real gate and the real scorer:
-
-```bash
-powershell -File treasury\quickstart.ps1   # Windows
-./treasury/quickstart.sh                   # Linux / macOS / WSL
-# expected final line: RESULT: 6/6 probes passed
-```
+The live two-process smoke gate (real gate + real scorer, 8-probe ladder)
+lives with the reference application in the testing monorepo
+(`treasury-intent-controller`); run it there when a change touches the wire.
 
 ## Status
 
@@ -319,10 +296,14 @@ consumer in-repo). The criterion scorer (`/ml/evaluate`) is live end-to-end:
 (zero-config refuses everything; `force_scores` remains the test affordance),
 and the Python service in `core/scorer/` answers it per `CONTRACT.md` §8,
 verified two-process with a real service kill. This repo is the **intent
-plane** — gate, scorer, contract, wire fixtures, and the treasury
-demonstration together. Still separate: the settlement consumer
+plane SDK** — gate, scorer, contract, and wire fixtures; the reference
+application and its demonstration live in the testing monorepo
+(`treasury-intent-controller`), where experimentation happens before changes
+are ported here. Still separate: the settlement consumer
 (COMPASS/TypeScript) and the wheel-backed artifact reader inside `core/scorer/`
 (`ke-artifact-py` — built and live-verified 2026-07-12, but Linux/CI-only:
 its test lane skips visibly on hosts without the wheel);
-the ATLAS `IntentSpec` artifact type that publishes the criteria this gate
-consumes is merged upstream (ADR-0021, canon-5).
+the ATLAS `IntentSpec` artifact type is merged upstream (ADR-0021, canon-5)
+but is RETIRED as a criteria source (ADR-0007): criteria reach this gate only
+through §2.6 spec resolution; `rule_artifact_hash` keeps pointing at the
+upstream rule artifact as provenance.
