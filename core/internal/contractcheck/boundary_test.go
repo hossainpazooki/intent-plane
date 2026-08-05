@@ -6,9 +6,16 @@
 // P2 ("artifacts are the only crossings") is a deployment claim; what this
 // package makes mechanical is its gate-side precondition: the intent interface
 // (the four HTTP routes plus the durable feed) is the ONLY surface, because
-// every Go package stays under core/internal/ and the intra-repo import graph
-// matches the pinned adjacency exactly. Any new edge, any new package outside
-// core/internal/ (other than core/cmd/server), or any dropped edge fails here.
+// the intra-repo import graph matches the pinned adjacency exactly. Any new
+// edge, any new core package outside core/internal/ (other than
+// core/cmd/server and plane), or any dropped edge fails here.
+//
+// LAYERING (§7, 2026-08-05 ruling): the core is a minimal SDK — core/ plus
+// plane/ (the boundary artifact, verification only). Everything else at the
+// top level is an APPLICATION tree built on the SDK. Core packages are pinned
+// exactly, by table. Application trees are pinned by RULE, never by name: the
+// SDK's checks carry no application vocabulary (that is core-neutrality's
+// job to keep true).
 package contractcheck
 
 import (
@@ -23,12 +30,14 @@ import (
 
 const modulePrefix = "github.com/pazooki/intent-plane/"
 
-// allowedProd pins the production (non-_test.go) import adjacency, intra-module
-// edges only. Keys are the complete set of Go package directories: a package
-// missing here — or present here but missing on disk — is a boundary change
-// and must be made deliberately, in CONTRACT.md first.
+// allowedProd pins the production (non-_test.go) import adjacency of the CORE,
+// intra-module edges only. Keys are the complete set of core Go package
+// directories: a core package missing here — or present here but missing on
+// disk — is a boundary change and must be made deliberately, in CONTRACT.md
+// first. Application packages never appear in this table.
 var allowedProd = map[string][]string{
-	"core/cmd/server":             {"core/internal/durable", "core/internal/gate", "core/internal/idempotency", "core/internal/intent", "core/internal/scoring"},
+	"core/cmd/server":             {"core/internal/durable", "core/internal/gate", "core/internal/idempotency", "core/internal/intent", "core/internal/scoring", "plane"},
+	"plane":                       {},
 	"core/internal/adapter":       {"core/internal/intent"},
 	"core/internal/audit":         {},
 	"core/internal/contractcheck": {},
@@ -42,9 +51,12 @@ var allowedProd = map[string][]string{
 
 // allowedTestExtra pins edges that exist ONLY in _test.go files, beyond the
 // production adjacency. gate -> adapter is the sanctioned one: the acceptance
-// suite drives the TEST-ONLY reference adapter (CONTRACT.md §7.2).
+// suite drives the TEST-ONLY reference adapter (CONTRACT.md §7.2). Core tests
+// sign fixtures with TEST-LOCAL helpers — a core test importing an
+// application tree is a layering violation, not a sanctioned extra.
 var allowedTestExtra = map[string][]string{
 	"core/cmd/server":             {"core/internal/lifecycle"},
+	"plane":                       {},
 	"core/internal/adapter":       {},
 	"core/internal/audit":         {},
 	"core/internal/durable":       {},
@@ -54,6 +66,20 @@ var allowedTestExtra = map[string][]string{
 	"core/internal/lifecycle":     {},
 	"core/internal/scoring":       {},
 	"core/internal/contractcheck": {},
+}
+
+// isCoreDir reports whether a repo-relative package dir belongs to the SDK
+// core (core/... or the plane artifact). Everything else is application land.
+func isCoreDir(d string) bool {
+	return d == "plane" || strings.HasPrefix(d, "plane/") || d == "core" || strings.HasPrefix(d, "core/")
+}
+
+// appTree returns the top-level tree name of an application package dir.
+func appTree(d string) string {
+	if i := strings.Index(d, "/"); i >= 0 {
+		return d[:i]
+	}
+	return d
 }
 
 // repoRoot walks up from the test's CWD to the directory holding go.mod.
@@ -157,14 +183,27 @@ func sorted(set map[string]bool) []string {
 	return out
 }
 
-// TestImportBoundary pins the intent interface boundary: the package set and
-// its import adjacency match CONTRACT.md §7 exactly.
+// TestImportBoundary pins the intent interface boundary. Core packages: the
+// package SET and its import adjacency match CONTRACT.md §7 exactly.
+// Application trees: pinned by rule — an application package may import only
+// the plane artifact and packages within its OWN tree; nothing in the core
+// may import an application package, in production OR test code.
 func TestImportBoundary(t *testing.T) {
 	root := repoRoot(t)
 	dirs := goPackageDirs(t, root)
 
-	// The package SET is pinned: nothing appears or disappears silently, and
-	// nothing lives outside core/internal/ except core/cmd/server.
+	var coreDirs, appDirs []string
+	for _, d := range dirs {
+		if isCoreDir(d) {
+			coreDirs = append(coreDirs, d)
+		} else {
+			appDirs = append(appDirs, d)
+		}
+	}
+
+	// The CORE package SET is pinned: nothing appears or disappears silently.
+	// The sanctioned non-internal core packages are core/cmd/server and the
+	// plane artifact; everything else stays under core/internal/.
 	want := sorted(func() map[string]bool {
 		m := map[string]bool{}
 		for k := range allowedProd {
@@ -172,16 +211,19 @@ func TestImportBoundary(t *testing.T) {
 		}
 		return m
 	}())
-	if got := strings.Join(dirs, ","); got != strings.Join(want, ",") {
-		t.Fatalf("Go package set changed.\n got: %v\nwant: %v\nA new or removed package is a boundary change: amend CONTRACT.md first.", dirs, want)
+	if got := strings.Join(coreDirs, ","); got != strings.Join(want, ",") {
+		t.Fatalf("core Go package set changed.\n got: %v\nwant: %v\nA new or removed core package is a boundary change: amend CONTRACT.md first.", coreDirs, want)
 	}
-	for _, d := range dirs {
-		if d != "core/cmd/server" && !strings.HasPrefix(d, "core/internal/") {
-			t.Errorf("package %q lives outside core/internal/ — only core/cmd/server may be non-internal", d)
+	for _, d := range coreDirs {
+		if d != "core/cmd/server" && d != "plane" && !strings.HasPrefix(d, "core/internal/") {
+			t.Errorf("core package %q lives outside core/internal/ and is not core/cmd/server or plane (§7)", d)
 		}
 	}
 
-	for _, d := range dirs {
+	// Core adjacency: exact, table-pinned. Because the tables list only core
+	// packages, any core -> application import (production or test) fails
+	// here as an unsanctioned edge.
+	for _, d := range coreDirs {
 		prod, testOnly := intraModuleImports(t, root, d)
 
 		wantProd := map[string]bool{}
@@ -197,9 +239,79 @@ func TestImportBoundary(t *testing.T) {
 			wantTest[p] = true
 		}
 		for p := range testOnly {
+			if p == d {
+				// An external test package (package foo_test) importing its
+				// own package is Go's black-box test idiom, not an edge.
+				continue
+			}
 			if !wantProd[p] && !wantTest[p] {
 				t.Errorf("%s: unsanctioned TEST-ONLY import edge -> %s", d, p)
 			}
 		}
+	}
+
+	// Application trees: rule-pinned, name-free. Applications depend on the
+	// SDK (the plane artifact), never on core internals, and never on each
+	// other's trees.
+	for _, d := range appDirs {
+		tree := appTree(d)
+		prod, testOnly := intraModuleImports(t, root, d)
+		for _, set := range []map[string]bool{prod, testOnly} {
+			for p := range set {
+				if p == "plane" || p == d || appTree(p) == tree {
+					continue
+				}
+				t.Errorf("%s: application package imports %q — applications may import only the plane artifact and their own tree (§7)", d, p)
+			}
+		}
+	}
+}
+
+// TestKeyPossessionBoundary makes "holds no keys" a code-graph fact IN-REPO,
+// generically: within any application tree, a package named <tree>/authority
+// is a signing seat, and only <tree>/control — that application's attester
+// seat — may import it in production code. The CORE (core/ and plane/) can
+// import no application package at all (TestImportBoundary), so the SDK
+// structurally cannot sign, publish, or activate anything: it verifies what
+// applications sign, never the reverse. That "cannot" is a property of the
+// import graph, not a code-review promise.
+// SCOPE, honestly: this is the in-repo approximation of the claim; the
+// deployment-graph half (workload identity, ROADMAP R2) is NOT established
+// here and stays asserted.
+func TestKeyPossessionBoundary(t *testing.T) {
+	root := repoRoot(t)
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if strings.HasSuffix(rel, "_test.go") {
+			return nil // test files may exercise a signing seat (its own tests do)
+		}
+		fset := token.NewFileSet()
+		f, perr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if perr != nil {
+			return perr
+		}
+		dir := filepath.ToSlash(filepath.Dir(rel))
+		for _, imp := range f.Imports {
+			ip := strings.Trim(imp.Path.Value, `"`)
+			if !strings.HasPrefix(ip, modulePrefix) {
+				continue
+			}
+			p := strings.TrimPrefix(ip, modulePrefix)
+			if !strings.HasSuffix(p, "/authority") {
+				continue
+			}
+			tree := appTree(p)
+			if dir != p && dir != tree+"/control" {
+				t.Errorf("%s imports %s: only %s/control may hold key operations (P3, in-repo half)", rel, p, tree)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

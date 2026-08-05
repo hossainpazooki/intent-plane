@@ -12,7 +12,7 @@ var allowedTransitions = map[State]map[State]bool{
 	Declared:  {Resolving: true},
 	Resolving: {Active: true, Failed: true},
 	Active:    {Verifying: true, Failed: true},
-	Verifying: {Achieved: true, Failed: true, FailedAtDispatch: true},
+	Verifying: {Achieved: true, Failed: true, FailedAtDispatch: true, ShadowRecorded: true},
 }
 
 // IsValidTransition reports whether from->to is permitted by the lifecycle graph.
@@ -22,7 +22,7 @@ var allowedTransitions = map[State]map[State]bool{
 //	DECLARED  -> RESOLVING
 //	RESOLVING -> ACTIVE, FAILED
 //	ACTIVE    -> VERIFYING, FAILED
-//	VERIFYING -> ACHIEVED, FAILED, FAILED_AT_DISPATCH
+//	VERIFYING -> ACHIEVED, FAILED, FAILED_AT_DISPATCH, SHADOW_RECORDED
 //
 // Terminal states have no outgoing edges.
 // FAILED_AT_DISPATCH is reachable ONLY from VERIFYING (table-enforced); the gate

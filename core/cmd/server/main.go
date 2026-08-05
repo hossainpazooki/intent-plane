@@ -16,18 +16,28 @@
 // INTENT_DATA_DIR, default "./data"); handlers share them. The per-request Gate is
 // a thin wrapper over those shared singletons.
 //
-// Scorer selection (CONTRACT.md §2.5): a request carrying
-// "force_scores" (criterion -> {declaration, dispatch} results) scores through
-// the inline forceScorer — the documented test affordance, preserved verbatim.
-// Every other request scores through ONE boot-time shared HTTPScorer built from
-// INTENT_SCORER_URL. Unset INTENT_SCORER_URL means an empty endpoint, every Score is
-// Unevaluable, and the gate refuses everything: the zero-config server
-// authorizes nothing.
+// Spec resolution (CONTRACT.md §2.6): the wire carries NO criteria — the field
+// does not exist in the DTO, so a request supplying them is a loud 400
+// (DisallowUnknownFields). Criteria, posture, and action class come ONLY from
+// the plane resolver: the spec store at INTENT_SPEC_DIR (default
+// <data>/specs), verified against INTENT_TRUST_ROOT, with the hybrid wire
+// path (spec_envelope) accepted iff verified AND pinned. No trust root means
+// an empty root, every resolution is unattested, and the gate refuses
+// everything: the zero-config server authorizes nothing.
+//
+// Scorer selection (CONTRACT.md §2.5): "force_scores" is a GUARDED test
+// affordance — honored only when the server booted with
+// INTENT_UNSAFE_FORCE_SCORES=1; otherwise a request carrying it is a loud
+// 400. Every other request scores through ONE boot-time shared HTTPScorer
+// built from INTENT_SCORER_URL (unset = every Score Unevaluable = refuse
+// everything). Every SCORED/RECHECK feed record carries a scorer_id witness,
+// so a forced grant is never byte-indistinguishable from a live-scored one.
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -40,20 +50,17 @@ import (
 	"github.com/pazooki/intent-plane/core/internal/idempotency"
 	"github.com/pazooki/intent-plane/core/internal/intent"
 	"github.com/pazooki/intent-plane/core/internal/scoring"
+	"github.com/pazooki/intent-plane/plane"
 )
 
 // --- request / response DTOs (snake_case JSON, decoupled from internal types) ---
 
-type criterionDTO struct {
-	Name       string  `json:"name"`
-	Threshold  float64 `json:"threshold"`
-	Volatility string  `json:"volatility"` // "stable" | "volatile"
-}
-
+// specDTO carries ONLY the declarant-owned spec field. Criteria, posture, and
+// action class are NOT wire fields: they arrive solely through the resolver
+// from the ATTESTED payload (P1 closed at the type level — a request carrying
+// "criteria" is an unknown field and 400s).
 type specDTO struct {
-	ActionClass      string         `json:"action_class"`
-	Criteria         []criterionDTO `json:"criteria"`
-	IdempotencyScope string         `json:"idempotency_scope"`
+	IdempotencyScope string `json:"idempotency_scope"`
 }
 
 // forceScore carries the forced result for a single criterion, per phase. An
@@ -64,12 +71,16 @@ type forceScore struct {
 }
 
 type intentRequest struct {
-	EpisodeSeed      string                `json:"episode_seed"`
-	IdempotencyKey   string                `json:"idempotency_key"`
-	RuleArtifactHash string                `json:"rule_artifact_hash"`
-	IntentSpecHash   string                `json:"intent_spec_hash"`
-	Spec             specDTO               `json:"spec"`
-	ForceScores      map[string]forceScore `json:"force_scores"`
+	EpisodeSeed      string  `json:"episode_seed"`
+	IdempotencyKey   string  `json:"idempotency_key"`
+	RuleArtifactHash string  `json:"rule_artifact_hash"`
+	IntentSpecHash   string  `json:"intent_spec_hash"`
+	Spec             specDTO `json:"spec"`
+	// SpecEnvelope is the hybrid wire path: a full signed envelope, accepted
+	// iff it verifies against the trust root AND its hash is pinned in the
+	// store. Optional; the store path needs only intent_spec_hash.
+	SpecEnvelope json.RawMessage       `json:"spec_envelope,omitempty"`
+	ForceScores  map[string]forceScore `json:"force_scores"`
 }
 
 // intentResponse is the V2 response shape: settlement is removed (the gate no
@@ -148,7 +159,7 @@ func scorerFromEnv() *scoring.HTTPScorer {
 	return scoring.NewHTTPScorer(os.Getenv("INTENT_SCORER_URL"))
 }
 
-func handleIntents(feed *durable.Store, istore *idempotency.Store, live scoring.Scorer) http.HandlerFunc {
+func handleIntents(feed *durable.Store, istore *idempotency.Store, live scoring.Scorer, specs *plane.Store, allowForce bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req intentRequest
 		dec := json.NewDecoder(r.Body)
@@ -158,33 +169,62 @@ func handleIntents(feed *durable.Store, istore *idempotency.Store, live scoring.
 			return
 		}
 
+		// force_scores is a GUARDED test affordance: without the unsafe boot
+		// flag, carrying it is a loud 400 — never a silent ignore (a silently
+		// dropped bypass is a bypass in waiting).
+		if req.ForceScores != nil && !allowForce {
+			http.Error(w, "bad request: force_scores requires the server to boot with INTENT_UNSAFE_FORCE_SCORES=1", http.StatusBadRequest)
+			return
+		}
+
 		i := intent.Intent{
 			EpisodeSeed:      req.EpisodeSeed,
 			IdempotencyKey:   intent.IdempotencyKey(req.IdempotencyKey),
 			RuleArtifactHash: req.RuleArtifactHash,
 			IntentSpecHash:   req.IntentSpecHash,
 			Spec: intent.IntentSpecParams{
-				ActionClass:      req.Spec.ActionClass,
 				IdempotencyScope: req.Spec.IdempotencyScope,
 			},
 		}
-		for _, c := range req.Spec.Criteria {
-			i.Spec.Criteria = append(i.Spec.Criteria, intent.Criterion{
-				Name:       c.Name,
-				Threshold:  c.Threshold,
-				Volatility: intent.Volatility(c.Volatility),
-			})
+
+		// Resolve the spec through the plane: store authoritative, wire
+		// envelope accepted iff verified AND pinned. The gate receives ONLY
+		// what came out of signature verification + content-address equality;
+		// unattested and revoked are carried into the intent for the gate's
+		// fail-closed refusals (the gate, not this handler, owns the event
+		// log of the refusal).
+		switch res, err := specs.Resolve(req.IntentSpecHash, req.SpecEnvelope); {
+		case err == nil:
+			i.Resolution = intent.Resolution{Attested: true, Source: res.Source, KeyID: res.KeyID}
+			i.Spec.ActionClass = res.Payload.ActionClass
+			i.Spec.Posture = intent.Posture(res.Payload.Posture)
+			for _, c := range res.Payload.Criteria {
+				i.Spec.Criteria = append(i.Spec.Criteria, intent.Criterion{
+					Name:       c.Name,
+					Threshold:  c.Threshold,
+					Volatility: intent.Volatility(c.Volatility),
+				})
+			}
+			for _, hj := range res.Payload.HumanJudgment {
+				i.Spec.HumanJudgment = append(i.Spec.HumanJudgment, hj.Name)
+			}
+		default:
+			var rv plane.RevokedError
+			if errors.As(err, &rv) {
+				i.Resolution = intent.Resolution{RevokedRef: rv.Ref}
+			}
+			// else: zero Resolution — the gate refuses unattested-spec.
 		}
 
-		// Per-request gate over the SHARED boot-time stores (the slice-1
-		// per-request fresh store is gone by contract). force_scores present
-		// selects the forced scorer (test affordance); otherwise the shared
-		// live scorer (CONTRACT.md §2.5).
 		var scorer scoring.Scorer = live
+		scorerID := "live"
 		if req.ForceScores != nil {
 			scorer = forceScorer{scores: req.ForceScores}
+			scorerID = "forced"
 		}
-		g := gate.New(scorer, feed, istore)
+		g := gate.New(scorer, feed, istore,
+			gate.WithRevocations(specs),
+			gate.WithScorerID(scorerID))
 		res, err := g.Authorize(r.Context(), i)
 		if err != nil {
 			http.Error(w, "authorize: "+err.Error(), http.StatusInternalServerError)
@@ -238,10 +278,10 @@ func handleIntentEvents(feed *durable.Store) http.HandlerFunc {
 
 // newMux wires the routes over the boot-time shared stores. Split out so tests
 // can drive it via httptest without binding a port.
-func newMux(feed *durable.Store, istore *idempotency.Store, live scoring.Scorer) *http.ServeMux {
+func newMux(feed *durable.Store, istore *idempotency.Store, live scoring.Scorer, specs *plane.Store, allowForce bool) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
-	mux.HandleFunc("POST /v2/intents", handleIntents(feed, istore, live))
+	mux.HandleFunc("POST /v2/intents", handleIntents(feed, istore, live, specs, allowForce))
 	mux.HandleFunc("GET /v2/events", handleEvents(feed))
 	mux.HandleFunc("GET /v2/intents/{id}/events", handleIntentEvents(feed))
 	return mux
@@ -261,6 +301,39 @@ func main() {
 		log.Fatalf("open idempotency store: %v", err)
 	}
 
+	// The plane spec store + trust root (CONTRACT.md §2.6). No trust root =
+	// empty root = every resolution unattested = the gate refuses everything.
+	// Fail-closed boot posture, same shape as the scorer below.
+	specDir := os.Getenv("INTENT_SPEC_DIR")
+	if specDir == "" {
+		specDir = dir + "/specs"
+	}
+	var root plane.TrustRoot
+	if p := os.Getenv("INTENT_TRUST_ROOT"); p != "" {
+		raw, rerr := os.ReadFile(p)
+		if rerr != nil {
+			log.Fatalf("read trust root: %v", rerr)
+		}
+		root, rerr = plane.ParseTrustRoot(raw)
+		if rerr != nil {
+			log.Fatalf("parse trust root: %v", rerr)
+		}
+		log.Printf("trust root: %d key(s) from %s", len(root.Keys), p)
+	} else {
+		log.Printf("INTENT_TRUST_ROOT unset: empty trust root, every spec is unattested (gate refuses everything)")
+	}
+	specs, err := plane.OpenStore(specDir, root)
+	if err != nil {
+		log.Fatalf("open spec store: %v", err)
+	}
+
+	// force_scores guard: the scoring bypass is honored ONLY behind this
+	// explicit unsafe boot flag.
+	allowForce := os.Getenv("INTENT_UNSAFE_FORCE_SCORES") == "1"
+	if allowForce {
+		log.Printf("INTENT_UNSAFE_FORCE_SCORES=1: force_scores accepted (TEST POSTURE — never production)")
+	}
+
 	// ONE shared scorer at boot, like the stores (CONTRACT.md §2.5).
 	live := scorerFromEnv()
 	if live.Endpoint == "" {
@@ -274,5 +347,5 @@ func main() {
 		addr = v
 	}
 	log.Printf("intent-plane gate listening on %s (data dir %s)", addr, dir)
-	log.Fatal(http.ListenAndServe(addr, newMux(feed, istore, live)))
+	log.Fatal(http.ListenAndServe(addr, newMux(feed, istore, live, specs, allowForce)))
 }

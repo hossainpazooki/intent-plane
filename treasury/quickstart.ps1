@@ -39,15 +39,42 @@ try {
     $env:SCORER_PORT = "$scorerPort"
     $scorer = Start-Process -FilePath $venvPy -ArgumentList "-m", "scorer" -WorkingDirectory (Join-Path $repo "core\scorer") -PassThru -WindowStyle Hidden
 
-    Write-Host "[boot] building and starting the gate"
+    Write-Host "[boot] building the gate and the plane role CLIs"
     & go build -o (Join-Path $repo "bin\intent-gate.exe") "$repo\core\cmd\server"
     # A failing NATIVE command does not halt under -File even with
     # ErrorActionPreference=Stop, so a broken build would silently probe the
     # stale gitignored binary and report a false green. The sh twin gets this
     # from set -e.
     if ($LASTEXITCODE -ne 0) { throw "go build failed" }
+    & go build -o (Join-Path $repo "bin\intent-control.exe") "$repo\treasury\control"
+    if ($LASTEXITCODE -ne 0) { throw "go build (control) failed" }
+    $control = Join-Path $repo "bin\intent-control.exe"
+
+    # The plane ladder: keygen -> trust root -> attest -> publish. Nothing the
+    # probes declare against exists until the control role's key has signed it;
+    # the gate receives criteria ONLY through this store (P1: the wire has no
+    # criteria field at all).
+    Write-Host "[plane] keygen + trust root (test key authority - ADR-0009 not landed)"
+    & $control keygen -key (Join-Path $dataDir "attester.key.json") | Out-Null
+    & $control root -key (Join-Path $dataDir "attester.key.json") -out (Join-Path $dataDir "trust-root.json") | Out-Null
+
+    function AttestPublish($specFile) {
+        & $control attest -key (Join-Path $dataDir "attester.key.json") `
+            -draft (Join-Path $PSScriptRoot "specs\$specFile") -out (Join-Path $dataDir "$specFile.env.json") | Out-Null
+        $line = & $control publish -root (Join-Path $dataDir "trust-root.json") `
+            -store (Join-Path $dataDir "specs") -env (Join-Path $dataDir "$specFile.env.json")
+        return ($line -replace "^published \+ pinned ", "")
+    }
+    Write-Host "[plane] attesting + publishing the treasury specs"
+    $hash01 = AttestPublish "01-within-limits.spec.json"
+    $hash02 = AttestPublish "02-near-duplicate.spec.json"
+    $hash03 = AttestPublish "03-over-threshold.spec.json"
+    $hash05 = AttestPublish "05-thin.spec.json"
+
     $env:INTENT_SCORER_URL = $scorerUrl
     $env:INTENT_DATA_DIR = $dataDir
+    $env:INTENT_TRUST_ROOT = Join-Path $dataDir "trust-root.json"
+    $env:INTENT_SPEC_DIR = Join-Path $dataDir "specs"
     $env:INTENT_ADDR = ":$gatePort"
     $gate = Start-Process -FilePath (Join-Path $repo "bin\intent-gate.exe") -PassThru -WindowStyle Hidden
 
@@ -63,8 +90,8 @@ try {
     # $wantReasonReject is the discriminating guard: a reason may be REQUIRED to
     # contain one substring and REFUSED for containing another, so that a
     # fail-closed "unevaluable:<name>" can never satisfy a "criterion bound" probe.
-    function Probe($name, $file, $wantTerminal, $wantReasonPart, $why, $wantReasonReject = "") {
-        $body = Get-Content (Join-Path $PSScriptRoot "probes\$file") -Raw
+    function Probe($name, $file, $specHash, $wantTerminal, $wantReasonPart, $why, $wantReasonReject = "") {
+        $body = (Get-Content (Join-Path $PSScriptRoot "probes\$file") -Raw) -replace "@SPEC_HASH@", $specHash
         $r = Invoke-RestMethod -Uri "$gateUrl/v2/intents" -Method Post -Body $body -ContentType "application/json"
         $ok = ($r.terminal -eq $wantTerminal) -and ($wantReasonPart -eq "" -or $r.reason -like "*$wantReasonPart*") -and ($wantReasonReject -eq "" -or $r.reason -notlike "*$wantReasonReject*")
         if ($ok) { $script:pass++; $tag = "PASS" } else { $script:fail++; $tag = "FAIL" }
@@ -72,15 +99,21 @@ try {
         Write-Host ("       why it matters: {0}" -f $why)
     }
 
-    Probe "declare within limits" "01-declare-pass.json" "ACHIEVED" "" "the full lifecycle runs against real scored facts; exactly one durable ACHIEVED record exists"
-    Probe "near-duplicate, same key" "02-near-duplicate.json" "FAILED_AT_DISPATCH" "idempotency-collision" "at-most-once holds by construction: the declared key collides, value cannot move twice"
-    Probe "over threshold" "03-over-threshold.json" "FAILED" "balance" "criteria actually bind - the refusal names the failing criterion, and NOT because it was unevaluable" "unevaluable"
+    Probe "declare within limits" "01-declare-pass.json" $hash01 "ACHIEVED" "" "the full lifecycle runs against a SIGNED spec and real scored facts; exactly one durable ACHIEVED record exists"
+    Probe "near-duplicate, same key" "02-near-duplicate.json" $hash02 "FAILED_AT_DISPATCH" "idempotency-collision" "at-most-once holds by construction: the declared key collides, value cannot move twice"
+    Probe "over threshold" "03-over-threshold.json" $hash03 "FAILED" "balance" "criteria actually bind - the refusal names the failing criterion, and NOT because it was unevaluable" "unevaluable"
+    Probe "unattested spec hash" "06-unattested.json" "1111111111111111111111111111111111111111111111111111111111111111" "FAILED" "unevaluable:unattested-spec" "no signature, no scoring: a hash nobody attested never reaches the scorer (P1)"
+
+    Write-Host "[plane] revoking the within-limits spec (signed tombstone)"
+    & $control revoke -key (Join-Path $dataDir "attester.key.json") -root (Join-Path $dataDir "trust-root.json") `
+        -store (Join-Path $dataDir "specs") -hash $hash01 -ref quickstart-pull | Out-Null
+    Probe "declare against revoked spec" "07-revoked.json" $hash01 "FAILED" "revoked:quickstart-pull" "authority is revocable: the tombstone's ref is witnessed in the refusal"
 
     Write-Host "[chaos] killing the scorer to prove fail-closed on outage"
     Stop-Process -Id $scorer.Id -Force
     Start-Sleep -Milliseconds 500
-    Probe "declare during scorer outage" "04-outage.json" "FAILED" "unevaluable" "an unreachable scorer denies - unevaluable NEVER collapses into a pass"
-    Probe "empty criteria" "05-empty-criteria.json" "FAILED" "unevaluable:empty-criteria" "thin-spec defense - 'no criterion failed' is never satisfied by 'no criterion existed'"
+    Probe "declare during scorer outage" "04-outage.json" $hash02 "FAILED" "unevaluable" "an unreachable scorer denies - unevaluable NEVER collapses into a pass"
+    Probe "attested-but-thin spec" "05-empty-criteria.json" $hash05 "FAILED" "unevaluable:empty-criteria" "thin-spec defense - attestation does not launder vacuity; zero criteria still refuse"
 
     $events = Invoke-RestMethod -Uri "$gateUrl/v2/events?since=0"
     $achieved = @($events.events | Where-Object { $_.type -eq "ACHIEVED" })
@@ -88,7 +121,7 @@ try {
     else { $fail++; Write-Host "[FAIL] durable feed: expected exactly 1 ACHIEVED, got $($achieved.Count)" }
     Write-Host "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
-    Write-Host ("RESULT: {0}/6 probes passed" -f $pass)
+    Write-Host ("RESULT: {0}/8 probes passed" -f $pass)
 }
 finally {
     # Reclaim on EVERY exit path - a Wait-Healthy timeout or a transport throw

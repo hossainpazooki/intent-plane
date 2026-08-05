@@ -1,0 +1,17 @@
+{
+  "spec_version": 1,
+  "action_class": "payment",
+  "enforcement_posture": "enforce",
+  "criteria": [
+    {
+      "name": "balance",
+      "threshold": 120,
+      "volatility": "stable"
+    },
+    {
+      "name": "fx_rate",
+      "threshold": 1.0,
+      "volatility": "volatile"
+    }
+  ]
+}

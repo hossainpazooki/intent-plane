@@ -14,11 +14,15 @@ package main
 //     refused with "idempotency-collision" (at-most-once across restart).
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -26,7 +30,69 @@ import (
 	"github.com/pazooki/intent-plane/core/internal/idempotency"
 	"github.com/pazooki/intent-plane/core/internal/intent"
 	"github.com/pazooki/intent-plane/core/internal/lifecycle"
+	"github.com/pazooki/intent-plane/plane"
 )
+
+// testKeyFile is a TEST-LOCAL signing seat. The core's tests must not import
+// an application's authority package (layering: the SDK verifies what
+// applications sign; core-neutrality keeps application vocabulary out of
+// core/), so fixture signing lives here — same on-disk shape, test authority
+// by construction.
+type testKeyFile struct {
+	KeyID        string `json:"keyid"`
+	Public       string `json:"public"`
+	Private      string `json:"private"`
+	KeyAuthority string `json:"key_authority"`
+}
+
+func testKeygen(path string) (testKeyFile, error) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return testKeyFile{}, err
+	}
+	kf := testKeyFile{
+		KeyID:        plane.KeyIDFor(pub),
+		Public:       base64.StdEncoding.EncodeToString(pub),
+		Private:      base64.StdEncoding.EncodeToString(priv),
+		KeyAuthority: plane.KeyAuthorityTest,
+	}
+	raw, err := json.MarshalIndent(kf, "", "  ")
+	if err != nil {
+		return testKeyFile{}, err
+	}
+	return kf, os.WriteFile(path, raw, 0o600)
+}
+
+func testLoadKey(path string) (testKeyFile, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return testKeyFile{}, err
+	}
+	var kf testKeyFile
+	return kf, json.Unmarshal(raw, &kf)
+}
+
+func (kf testKeyFile) TrustRootJSON() ([]byte, error) {
+	return json.MarshalIndent(map[string]any{"keys": map[string]string{kf.KeyID: kf.Public}}, "", "  ")
+}
+
+func (kf testKeyFile) Attest(payload []byte) (plane.Envelope, string, error) {
+	rawPriv, err := base64.StdEncoding.DecodeString(kf.Private)
+	if err != nil {
+		return plane.Envelope{}, "", err
+	}
+	sig := ed25519.Sign(ed25519.PrivateKey(rawPriv), plane.PAE(plane.PayloadType, payload))
+	env := plane.Envelope{
+		PayloadType: plane.PayloadType,
+		Payload:     base64.StdEncoding.EncodeToString(payload),
+		Signatures: []plane.Signature{{
+			KeyID:        kf.KeyID,
+			Sig:          base64.StdEncoding.EncodeToString(sig),
+			KeyAuthority: kf.KeyAuthority,
+		}},
+	}
+	return env, plane.SpecHash(payload), nil
+}
 
 // testServer is one booted server instance: the mux over the shared boot-time
 // stores, exactly as main wires them.
@@ -35,6 +101,8 @@ type testServer struct {
 	mux    *http.ServeMux
 	feed   *durable.Store
 	istore *idempotency.Store
+	specs  *plane.Store
+	key    testKeyFile
 }
 
 // boot mirrors main's boot path: set INTENT_DATA_DIR (t.Setenv), read it back from
@@ -57,11 +125,73 @@ func boot(t *testing.T, dir string) *testServer {
 		_ = feed.Close()
 		t.Fatalf("idempotency.OpenStore(%q): %v", dataDir, err)
 	}
+	// Attester key + trust root persist beside the data dir so a re-boot over
+	// the same dir sees the same authority (restart tests depend on it).
+	keyPath := filepath.Join(dataDir, "attester.key.json")
+	var kf testKeyFile
+	if _, statErr := os.Stat(keyPath); statErr == nil {
+		kf, err = testLoadKey(keyPath)
+	} else {
+		kf, err = testKeygen(keyPath)
+	}
+	if err != nil {
+		t.Fatalf("attester key: %v", err)
+	}
+	rootJSON, err := kf.TrustRootJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := plane.ParseTrustRoot(rootJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specs, err := plane.OpenStore(filepath.Join(dataDir, "specs"), root)
+	if err != nil {
+		t.Fatalf("spec store: %v", err)
+	}
 	// Mirror main: the shared live scorer comes from INTENT_SCORER_URL (tests set
-	// it via t.Setenv BEFORE boot; unset means zero-config refusal).
-	ts := &testServer{t: t, mux: newMux(feed, istore, scorerFromEnv()), feed: feed, istore: istore}
+	// it via t.Setenv BEFORE boot; unset means zero-config refusal). The wire
+	// tests drive terminals via force_scores, so they boot with the unsafe
+	// flag ON — exactly the posture the guard exists to make explicit.
+	ts := &testServer{t: t, mux: newMux(feed, istore, scorerFromEnv(), specs, true), feed: feed, istore: istore, specs: specs, key: kf}
 	t.Cleanup(ts.close) // double Close is a no-op on both stores
 	return ts
+}
+
+// attest signs and publishes a spec payload, returning its content address —
+// the hash a declaration cites. Criteria arrive at the gate ONLY through this.
+func (ts *testServer) attest(p plane.SpecPayload) string {
+	ts.t.Helper()
+	if p.SpecVersion == 0 {
+		p.SpecVersion = 1
+	}
+	if p.ActionClass == "" {
+		p.ActionClass = "sample-action"
+	}
+	if p.Posture == "" {
+		p.Posture = plane.PostureEnforce
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		ts.t.Fatal(err)
+	}
+	env, _, err := ts.key.Attest(raw)
+	if err != nil {
+		ts.t.Fatal(err)
+	}
+	hash, err := ts.specs.Publish(env)
+	if err != nil {
+		ts.t.Fatal(err)
+	}
+	return hash
+}
+
+// attestVolatileAlpha publishes the standard one-volatile-criterion spec most
+// wire tests use, returning its hash.
+func (ts *testServer) attestVolatileAlpha() string {
+	return ts.attest(plane.SpecPayload{Criteria: []plane.CriterionSpec{
+		{Name: "alpha", Threshold: 1.0, Volatility: "volatile"},
+	}})
 }
 
 // close releases the underlying files (simulated process exit).
@@ -108,8 +238,10 @@ func (ts *testServer) getEvents(query string) eventsResponse {
 	return resp
 }
 
-// intentBody builds the unchanged slice-1 request DTO with one volatile
-// criterion driven by force_scores (documented probe affordance).
+// intentBody builds the plane-amendment request DTO: the wire carries the
+// spec HASH (an attested artifact's content address), never criteria. The one
+// volatile criterion lives in the published spec; force_scores drives its
+// result (guarded probe affordance — the test server boots with the flag on).
 func intentBody(seed, key, specHash, declaration, dispatch string) string {
 	return fmt.Sprintf(`{
 		"episode_seed": %q,
@@ -117,11 +249,7 @@ func intentBody(seed, key, specHash, declaration, dispatch string) string {
 		"rule_artifact_hash": "rule-hash-1",
 		"intent_spec_hash": %q,
 		"spec": {
-			"action_class": "sample-action",
-			"idempotency_scope": "per-actor",
-			"criteria": [
-				{"name": "alpha", "threshold": 1.0, "volatility": "volatile"}
-			]
+			"idempotency_scope": "per-actor"
 		},
 		"force_scores": {
 			"alpha": {"declaration": %q, "dispatch": %q}
@@ -143,11 +271,7 @@ func intentBodyNoForce(seed, key, specHash string) string {
 		"rule_artifact_hash": "rule-hash-1",
 		"intent_spec_hash": %q,
 		"spec": {
-			"action_class": "sample-action",
-			"idempotency_scope": "per-actor",
-			"criteria": [
-				{"name": "alpha", "threshold": 1.0, "volatility": "volatile"}
-			]
+			"idempotency_scope": "per-actor"
 		}
 	}`, seed, key, specHash)
 }
@@ -169,7 +293,7 @@ func TestHealthz(t *testing.T) {
 // the slice-1 "settlement present" assertion.
 func TestIntentsAchieved(t *testing.T) {
 	ts := boot(t, t.TempDir())
-	resp := ts.postIntent(intentBody("seed-achieved", "key-achieved", "spec-hash-1", "PASS", "PASS"))
+	resp := ts.postIntent(intentBody("seed-achieved", "key-achieved", ts.attestVolatileAlpha(), "PASS", "PASS"))
 
 	if resp.Terminal != string(lifecycle.Achieved) {
 		t.Fatalf("terminal = %q, want %q", resp.Terminal, lifecycle.Achieved)
@@ -211,7 +335,7 @@ func TestIntentsAchieved(t *testing.T) {
 // NO ACHIEVED record in the feed — the §5.3 successor to "settlement nil".
 func TestIntentsFailedAtDispatch(t *testing.T) {
 	ts := boot(t, t.TempDir())
-	rr := ts.do(http.MethodPost, "/v2/intents", intentBody("seed-fad", "key-fad", "spec-hash-2", "PASS", "FAIL"))
+	rr := ts.do(http.MethodPost, "/v2/intents", intentBody("seed-fad", "key-fad", ts.attestVolatileAlpha(), "PASS", "FAIL"))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body=%q)", rr.Code, rr.Body.String())
 	}
@@ -256,8 +380,8 @@ func TestIntentsFailedAtDispatch(t *testing.T) {
 // the input since when nothing is returned; type filters records.
 func TestEventsCursorPaging(t *testing.T) {
 	ts := boot(t, t.TempDir())
-	ts.postIntent(intentBody("seed-page-1", "key-page-1", "spec-hash-p1", "PASS", "PASS"))
-	ts.postIntent(intentBody("seed-page-2", "key-page-2", "spec-hash-p2", "PASS", "PASS"))
+	ts.postIntent(intentBody("seed-page-1", "key-page-1", ts.attestVolatileAlpha(), "PASS", "PASS"))
+	ts.postIntent(intentBody("seed-page-2", "key-page-2", ts.attestVolatileAlpha(), "PASS", "PASS"))
 
 	all := ts.getEvents("?since=0")
 	if len(all.Events) == 0 {
@@ -321,8 +445,8 @@ func TestEventsCursorPaging(t *testing.T) {
 func TestIntentEventsOrder(t *testing.T) {
 	ts := boot(t, t.TempDir())
 	// A second intent first, so the endpoint must actually filter by id.
-	ts.postIntent(intentBody("seed-other", "key-other", "spec-hash-o", "PASS", "PASS"))
-	resp := ts.postIntent(intentBody("seed-order", "key-order", "spec-hash-3", "PASS", "PASS"))
+	ts.postIntent(intentBody("seed-other", "key-other", ts.attestVolatileAlpha(), "PASS", "PASS"))
+	resp := ts.postIntent(intentBody("seed-order", "key-order", ts.attestVolatileAlpha(), "PASS", "PASS"))
 	if resp.Terminal != string(lifecycle.Achieved) {
 		t.Fatalf("terminal = %q, want ACHIEVED", resp.Terminal)
 	}
@@ -376,7 +500,7 @@ func TestZeroConfigRefusesEverything(t *testing.T) {
 	t.Setenv("INTENT_SCORER_URL", "")
 	ts := boot(t, t.TempDir())
 
-	resp := ts.postIntent(intentBodyNoForce("seed-zeroconf", "key-zeroconf", "spec-hash-zc"))
+	resp := ts.postIntent(intentBodyNoForce("seed-zeroconf", "key-zeroconf", ts.attestVolatileAlpha()))
 	if resp.Terminal != string(lifecycle.Failed) {
 		t.Fatalf("terminal = %q, want %q (zero-config must refuse)", resp.Terminal, lifecycle.Failed)
 	}
@@ -399,31 +523,16 @@ func TestEmptyCriteriaRefusedOverWire(t *testing.T) {
 	t.Setenv("INTENT_SCORER_URL", "")
 	ts := boot(t, t.TempDir())
 
-	emptyCriteria := fmt.Sprintf(`{
-		"episode_seed": %q,
-		"idempotency_key": %q,
-		"rule_artifact_hash": "rule-hash-1",
-		"intent_spec_hash": "spec-thin-wire",
-		"spec": {
-			"action_class": "sample-action",
-			"idempotency_scope": "per-actor",
-			"criteria": []
-		}
-	}`, "seed-thin-wire-a", "key-thin-wire-a")
-	absentCriteria := fmt.Sprintf(`{
-		"episode_seed": %q,
-		"idempotency_key": %q,
-		"rule_artifact_hash": "rule-hash-1",
-		"intent_spec_hash": "spec-thin-wire",
-		"spec": {
-			"action_class": "sample-action",
-			"idempotency_scope": "per-actor"
-		}
-	}`, "seed-thin-wire-b", "key-thin-wire-b")
+	// The wire can no longer even EXPRESS criteria; the thin-spec case is now
+	// an ATTESTED spec whose payload carries zero criteria (empty array or
+	// field absent — both marshal to the same refusal), signed by the real
+	// attester. Attested-but-thin still refuses: attestation does not launder
+	// vacuity.
+	thinHash := ts.attest(plane.SpecPayload{Criteria: []plane.CriterionSpec{}})
+	thinBody := intentBodyNoForce("seed-thin-wire-a", "key-thin-wire-a", thinHash)
 
 	for name, body := range map[string]string{
-		"empty-criteria-array":  emptyCriteria,
-		"criteria-field-absent": absentCriteria,
+		"attested-but-thin": thinBody,
 	} {
 		t.Run(name, func(t *testing.T) {
 			resp := ts.postIntent(body)
@@ -454,25 +563,20 @@ func TestInvalidVolatilityRefusedOverWire(t *testing.T) {
 	t.Setenv("INTENT_SCORER_URL", "")
 	ts := boot(t, t.TempDir())
 
-	body := func(seed, key, volatilityJSON string) string {
-		return fmt.Sprintf(`{
-			"episode_seed": %q,
-			"idempotency_key": %q,
-			"rule_artifact_hash": "rule-hash-1",
-			"intent_spec_hash": "spec-vol-wire",
-			"spec": {
-				"action_class": "sample-action",
-				"idempotency_scope": "per-actor",
-				"criteria": [
-					{"name": "alpha", "threshold": 1.0%s}
-				]
-			}
-		}`, seed, key, volatilityJSON)
-	}
-
+	// The typo now lives in the ATTESTED payload: the attester signed a spec
+	// whose volatility string is wrong (or absent). Signature verification
+	// passes — the bytes are exactly what was signed — and the gate still
+	// refuses: attestation vouches for provenance, not for shape; shape is
+	// the gate's own defense.
+	typoHash := ts.attest(plane.SpecPayload{Criteria: []plane.CriterionSpec{
+		{Name: "alpha", Threshold: 1.0, Volatility: "volatil"},
+	}})
+	omittedHash := ts.attest(plane.SpecPayload{Criteria: []plane.CriterionSpec{
+		{Name: "alpha", Threshold: 1.0},
+	}})
 	cases := map[string]string{
-		"typo":    body("seed-vol-wire-a", "key-vol-wire-a", `, "volatility": "volatil"`),
-		"omitted": body("seed-vol-wire-b", "key-vol-wire-b", ``),
+		"typo":    intentBodyNoForce("seed-vol-wire-a", "key-vol-wire-a", typoHash),
+		"omitted": intentBodyNoForce("seed-vol-wire-b", "key-vol-wire-b", omittedHash),
 	}
 	for name, b := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -505,7 +609,7 @@ func TestLiveScorerDrivesTerminal(t *testing.T) {
 		t.Setenv("INTENT_SCORER_URL", srv.URL)
 		ts := boot(t, t.TempDir())
 
-		resp := ts.postIntent(intentBodyNoForce("seed-live-pass", "key-live-pass", "spec-hash-lp"))
+		resp := ts.postIntent(intentBodyNoForce("seed-live-pass", "key-live-pass", ts.attestVolatileAlpha()))
 		if resp.Terminal != string(lifecycle.Achieved) {
 			t.Fatalf("terminal = %q, want ACHIEVED", resp.Terminal)
 		}
@@ -527,7 +631,7 @@ func TestLiveScorerDrivesTerminal(t *testing.T) {
 		t.Setenv("INTENT_SCORER_URL", srv.URL)
 		ts := boot(t, t.TempDir())
 
-		resp := ts.postIntent(intentBodyNoForce("seed-live-fail", "key-live-fail", "spec-hash-lf"))
+		resp := ts.postIntent(intentBodyNoForce("seed-live-fail", "key-live-fail", ts.attestVolatileAlpha()))
 		if resp.Terminal != string(lifecycle.Failed) {
 			t.Fatalf("terminal = %q, want FAILED", resp.Terminal)
 		}
@@ -551,7 +655,7 @@ func TestForceScoresStillWins(t *testing.T) {
 	t.Setenv("INTENT_SCORER_URL", srv.URL)
 	ts := boot(t, t.TempDir())
 
-	resp := ts.postIntent(intentBody("seed-force-wins", "key-force-wins", "spec-hash-fw", "PASS", "PASS"))
+	resp := ts.postIntent(intentBody("seed-force-wins", "key-force-wins", ts.attestVolatileAlpha(), "PASS", "PASS"))
 	if resp.Terminal != string(lifecycle.Achieved) {
 		t.Fatalf("terminal = %q, want ACHIEVED via force_scores", resp.Terminal)
 	}
@@ -567,7 +671,7 @@ func TestDeterminismConditionalOnScores(t *testing.T) {
 	// Run A: forced scorer, PASS at both phases.
 	t.Setenv("INTENT_SCORER_URL", "")
 	tsA := boot(t, t.TempDir())
-	respA := tsA.postIntent(intentBody("seed-det", "key-det", "spec-det", "PASS", "PASS"))
+	respA := tsA.postIntent(intentBody("seed-det", "key-det", tsA.attestVolatileAlpha(), "PASS", "PASS"))
 	eventsA := tsA.getEvents("?since=0").Events
 	tsA.close()
 
@@ -580,7 +684,7 @@ func TestDeterminismConditionalOnScores(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("INTENT_SCORER_URL", srv.URL)
 	tsB := boot(t, t.TempDir())
-	respB := tsB.postIntent(intentBodyNoForce("seed-det", "key-det", "spec-det"))
+	respB := tsB.postIntent(intentBodyNoForce("seed-det", "key-det", tsB.attestVolatileAlpha()))
 	eventsB := tsB.getEvents("?since=0").Events
 
 	if respA.Terminal != respB.Terminal || respA.TrajectoryHash != respB.TrajectoryHash {
@@ -590,7 +694,27 @@ func TestDeterminismConditionalOnScores(t *testing.T) {
 		t.Fatalf("event counts diverged: forced %d, live %d", len(eventsA), len(eventsB))
 	}
 	for i := range eventsA {
-		if eventsA[i] != eventsB[i] {
+		a, b := eventsA[i], eventsB[i]
+		// scorer_id is the ONE field whose purpose is to differ across
+		// scorers: it witnesses WHICH authority answered, so a forced grant
+		// is never byte-indistinguishable from a live-scored one. Like
+		// GlobalSeq it is feed-level and hash-exempt; determinism-conditional-
+		// on-scores holds over everything else, byte for byte.
+		//
+		// The witness must be POSITIVELY present on every scoring event
+		// (CONTRACT.md §5.3 row (h)): a skeptic pass proved the whole suite
+		// stayed green with the stamping deleted, because empty==empty
+		// satisfied the equality below. Assert presence BEFORE zeroing.
+		if a.Type == "SCORED" || a.Type == "RECHECK" {
+			if a.ScorerID != "forced" {
+				t.Fatalf("event %d (%s): forced-run scorer_id = %q, want \"forced\" — the witness is missing", i, a.Type, a.ScorerID)
+			}
+			if b.ScorerID != "live" {
+				t.Fatalf("event %d (%s): live-run scorer_id = %q, want \"live\" — the witness is missing", i, b.Type, b.ScorerID)
+			}
+			a.ScorerID, b.ScorerID = "", ""
+		}
+		if a != b {
 			t.Fatalf("event %d diverged across scorers:\n forced: %+v\n live:   %+v", i, eventsA[i], eventsB[i])
 		}
 	}
@@ -625,21 +749,11 @@ func TestStableOnceVolatileTwiceAcrossWire(t *testing.T) {
 	t.Setenv("INTENT_SCORER_URL", srv.URL)
 	ts := boot(t, t.TempDir())
 
-	body := `{
-		"episode_seed": "seed-multiset",
-		"idempotency_key": "key-multiset",
-		"rule_artifact_hash": "rule-hash-1",
-		"intent_spec_hash": "spec-hash-m",
-		"spec": {
-			"action_class": "sample-action",
-			"idempotency_scope": "per-actor",
-			"criteria": [
-				{"name": "alpha", "threshold": 1.0, "volatility": "stable"},
-				{"name": "beta", "threshold": 1.0, "volatility": "volatile"}
-			]
-		}
-	}`
-	resp := ts.postIntent(body)
+	twoCritHash := ts.attest(plane.SpecPayload{Criteria: []plane.CriterionSpec{
+		{Name: "alpha", Threshold: 1.0, Volatility: "stable"},
+		{Name: "beta", Threshold: 1.0, Volatility: "volatile"},
+	}})
+	resp := ts.postIntent(intentBodyNoForce("seed-multiset", "key-multiset", twoCritHash))
 	if resp.Terminal != string(lifecycle.Achieved) {
 		t.Fatalf("terminal = %q, want ACHIEVED", resp.Terminal)
 	}
@@ -672,7 +786,7 @@ func TestRestartAtMostOnce(t *testing.T) {
 
 	// First process lifetime: reserve the key via an ACHIEVED intent.
 	s1 := boot(t, dir)
-	first := s1.postIntent(intentBody("seed-restart-1", "key-restart", "spec-hash-r1", "PASS", "PASS"))
+	first := s1.postIntent(intentBody("seed-restart-1", "key-restart", s1.attestVolatileAlpha(), "PASS", "PASS"))
 	if first.Terminal != string(lifecycle.Achieved) {
 		t.Fatalf("first terminal = %q, want ACHIEVED", first.Terminal)
 	}
@@ -687,7 +801,12 @@ func TestRestartAtMostOnce(t *testing.T) {
 	s2 := boot(t, dir)
 
 	// Same key, different intent (different seed + spec hash) => collision.
-	second := s2.postIntent(intentBody("seed-restart-2", "key-restart", "spec-hash-r2", "PASS", "PASS"))
+	// A DIFFERENT attested spec (distinct threshold, distinct hash) with the
+	// SAME key: still a collision — the key, not the spec, is the identity.
+	otherHash := s2.attest(plane.SpecPayload{Criteria: []plane.CriterionSpec{
+		{Name: "alpha", Threshold: 2.0, Volatility: "volatile"},
+	}})
+	second := s2.postIntent(intentBody("seed-restart-2", "key-restart", otherHash, "PASS", "PASS"))
 	if second.Terminal != string(lifecycle.FailedAtDispatch) {
 		t.Fatalf("post-restart terminal = %q, want FAILED_AT_DISPATCH", second.Terminal)
 	}

@@ -33,18 +33,60 @@ type Result struct {
 	AchievedSeq    int             // GlobalSeq of the emitted ACHIEVED record; 0 if not ACHIEVED
 }
 
+// RevocationChecker answers whether a spec hash has a VERIFIED revocation
+// tombstone. The gate consults it at declaration and re-consults it at the
+// dispatch edge — the same last-moment re-verification discipline as volatile
+// criteria, applied to authority itself.
+type RevocationChecker interface {
+	RevokedRef(hash string) (ref string, revoked bool)
+}
+
 // Gate authorizes intents against the scorer, the durable feed, and the
-// idempotency store. It holds NO settlement dependency (emit-and-observe).
+// idempotency store. It holds NO settlement dependency (emit-and-observe) and
+// NO signing keys: it verifies (via the resolver upstream) and decides.
 type Gate struct {
-	scorer scoring.Scorer
-	feed   *durable.Store
-	store  *idempotency.Store
+	scorer      scoring.Scorer
+	feed        *durable.Store
+	store       *idempotency.Store
+	revocations RevocationChecker // nil = no revocation signal reaches this gate
+	scorerID    string            // witness stamped on SCORED/RECHECK feed records
+}
+
+// Option configures a Gate at construction.
+type Option func(*Gate)
+
+// WithRevocations wires the revocation signal (typically the plane spec
+// store) into the gate.
+func WithRevocations(r RevocationChecker) Option {
+	return func(g *Gate) { g.revocations = r }
+}
+
+// WithScorerID sets the scorer-identity witness stamped on SCORED/RECHECK
+// feed records: the feed-level answer to "which scoring authority produced
+// this score" (a forced grant and a live-scored grant must not be
+// byte-indistinguishable in the feed).
+func WithScorerID(id string) Option {
+	return func(g *Gate) { g.scorerID = id }
 }
 
 // New constructs a Gate over the scorer, the (shared, durable) feed, and the
 // (shared, durable) idempotency store.
-func New(s scoring.Scorer, feed *durable.Store, store *idempotency.Store) *Gate {
-	return &Gate{scorer: s, feed: feed, store: store}
+func New(s scoring.Scorer, feed *durable.Store, store *idempotency.Store, opts ...Option) *Gate {
+	g := &Gate{scorer: s, feed: feed, store: store}
+	for _, o := range opts {
+		o(g)
+	}
+	return g
+}
+
+// revokedRef consults the revocation signal; a nil checker means no signal
+// reaches the gate (and the docs must say so — signal absence is not
+// non-revocation being proven).
+func (g *Gate) revokedRef(hash string) (string, bool) {
+	if g.revocations == nil {
+		return "", false
+	}
+	return g.revocations.RevokedRef(hash)
 }
 
 // Authorize drives the full lifecycle deterministically (CONTRACT.md §4.2, the
@@ -96,12 +138,18 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 	// assigned by the feed and never enters the in-memory log or the hash.
 	emit := func(typ, detail string) error {
 		e := log.Append(typ, detail)
-		_, err := g.feed.Append(durable.Record{
+		rec := durable.Record{
 			IntentID:  id,
 			IntentSeq: e.Seq,
 			Type:      e.Type,
 			Detail:    e.Detail,
-		})
+		}
+		// Scorer-identity witness on scoring events only. Feed-level: never
+		// enters the in-memory log or the TrajectoryHash.
+		if typ == "SCORED" || typ == "RECHECK" {
+			rec.ScorerID = g.scorerID
+		}
+		_, err := g.feed.Append(rec)
 		return err
 	}
 
@@ -137,6 +185,63 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 			return partial(), err
 		}
 		return terminal(lifecycle.Failed, "unevaluable:absent-key"), nil
+	}
+
+	// Step 1a2: revocation-at-resolution defense. The resolver may have found
+	// a verified tombstone and refused before producing any payload: that
+	// arrives as Attested:false + RevokedRef, and the revocation must win the
+	// cause — `revoked:<ref>` names the tombstone; collapsing it into
+	// unattested-spec would erase a fact the feed exists to witness. (Ordering
+	// bug found by end-to-end smoke; pinned by
+	// TestRevokedResolutionWinsOverUnattested.)
+	if ref := i.Resolution.RevokedRef; ref != "" {
+		if err := emit("REVOKED", ref); err != nil {
+			return partial(), err
+		}
+		return terminal(lifecycle.Failed, "revoked:"+ref), nil
+	}
+
+	// Step 1a3: attestation defense (CONTRACT.md §4.2 step 1a3). An intent
+	// whose spec was not resolved from a VERIFIED envelope (store or pinned
+	// wire) refuses before any scoring: no verified spec is unevaluable-shaped
+	// absence, and unevaluable never passes. This is P1's fail-closed floor —
+	// criteria that did not arrive through signature verification and
+	// content-address equality never reach the scorer.
+	if !i.Resolution.Attested {
+		if err := emit("UNEVALUABLE", "unattested-spec:"+i.IntentSpecHash); err != nil {
+			return partial(), err
+		}
+		return terminal(lifecycle.Failed, "unevaluable:unattested-spec"), nil
+	}
+	// Step 1a3b: revocation at declaration via the live checker (the resolver
+	// path is step 1a2 above; this consults the signal directly).
+	if ref, ok := g.revokedRef(i.IntentSpecHash); ok {
+		if err := emit("REVOKED", ref); err != nil {
+			return partial(), err
+		}
+		return terminal(lifecycle.Failed, "revoked:"+ref), nil
+	}
+	// Step 1a4: posture defense. Enforcement posture comes from inside the
+	// attested payload; an unknown posture is unevaluable-shaped absence and
+	// refuses — the zero value never silently becomes "enforce" (a posture
+	// default would be a config toggle wearing a trench coat).
+	if i.Spec.Posture != intent.PostureEnforce && i.Spec.Posture != intent.PostureShadow {
+		if err := emit("UNEVALUABLE", "invalid-posture:"+string(i.Spec.Posture)); err != nil {
+			return partial(), err
+		}
+		return terminal(lifecycle.Failed, "unevaluable:invalid-posture"), nil
+	}
+
+	// Step 1a5: human-judgment defense. A spec still carrying a
+	// deliberately-unquantified obligation refuses before any scoring: the
+	// check was routed to a human and no human resolved it. This abstention
+	// is a SUCCESS state of the plane (P6), not a coverage gap.
+	if len(i.Spec.HumanJudgment) > 0 {
+		name := i.Spec.HumanJudgment[0]
+		if err := emit("UNEVALUABLE", "human-judgment:"+name); err != nil {
+			return partial(), err
+		}
+		return terminal(lifecycle.Failed, "unevaluable:human-judgment:"+name), nil
 	}
 
 	// Step 1b: thin-spec defense (CONTRACT.md §4.2 step 1b). Spec resolution
@@ -238,6 +343,55 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 			return partial(), err
 		}
 		return terminal(lifecycle.FailedAtDispatch, reason), nil
+	}
+
+	// Step 4a2: revocation re-check at the dispatch edge. The pinned spec may
+	// have been revoked between verification and dispatch; the same authority
+	// signal is consulted at the last moment before the consequence fires.
+	// This ACTIVATES the reserved `revoked:<ref>` cause class (CONTRACT.md
+	// §3.3). The key is NOT reserved on this path: re-declaring after a fresh
+	// attestation is legitimate.
+	if ref, ok := g.revokedRef(i.IntentSpecHash); ok {
+		reason := "revoked:" + ref
+		if err := emit("REVOKED", ref); err != nil {
+			return partial(), err
+		}
+		if err := transition(lifecycle.FailedAtDispatch, reason); err != nil {
+			return partial(), err
+		}
+		return terminal(lifecycle.FailedAtDispatch, reason), nil
+	}
+
+	// Step 4a3: shadow posture. The intent was fully scored (declaration AND
+	// dispatch-edge recheck) and would have authorized — record exactly that,
+	// durably, and authorize NOTHING: no key reservation, no ACHIEVED, the
+	// consequence never fires. Promotion to enforce is a NEW attestation with
+	// a NEW hash (ADR-0006, Proposed): enforcement posture is an authority
+	// decision, not a config toggle.
+	if i.Spec.Posture == intent.PostureShadow {
+		if !lifecycle.IsValidTransition(state, lifecycle.ShadowRecorded) {
+			return partial(), fmt.Errorf("gate: invalid lifecycle transition %s -> %s", state, lifecycle.ShadowRecorded)
+		}
+		e := log.Append("SHADOW_RECORDED", id)
+		th := log.TrajectoryHash()
+		if _, err := g.feed.Append(durable.Record{
+			IntentID:         id,
+			IntentSeq:        e.Seq,
+			Type:             e.Type,
+			Detail:           e.Detail,
+			IdempotencyKey:   string(i.IdempotencyKey),
+			RuleArtifactHash: i.RuleArtifactHash,
+			IntentSpecHash:   i.IntentSpecHash,
+			TrajectoryHash:   th,
+		}); err != nil {
+			return partial(), err
+		}
+		return Result{
+			Terminal:       lifecycle.ShadowRecorded,
+			Reason:         "",
+			Events:         log.Events(),
+			TrajectoryHash: th,
+		}, nil
 	}
 
 	// Step 4b: idempotency reserve at the dispatch edge.

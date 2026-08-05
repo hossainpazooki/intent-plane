@@ -31,15 +31,20 @@ import (
 // ACHIEVED record (omitted otherwise). "seq" is always >=1; "intent_seq" may be 0
 // (the DECLARED event), so it is NOT omitempty.
 type Record struct {
-	GlobalSeq        int    `json:"seq"`
-	IntentSeq        int    `json:"intent_seq"`
-	IntentID         string `json:"intent_id"`
-	Type             string `json:"type"`
-	Detail           string `json:"detail,omitempty"`
-	IdempotencyKey   string `json:"idempotency_key,omitempty"`    // ACHIEVED only
-	RuleArtifactHash string `json:"rule_artifact_hash,omitempty"` // ACHIEVED only
-	IntentSpecHash   string `json:"intent_spec_hash,omitempty"`   // ACHIEVED only
-	TrajectoryHash   string `json:"trajectory_hash,omitempty"`    // ACHIEVED only
+	GlobalSeq int    `json:"seq"`
+	IntentSeq int    `json:"intent_seq"`
+	IntentID  string `json:"intent_id"`
+	Type      string `json:"type"`
+	Detail    string `json:"detail,omitempty"`
+	// ScorerID witnesses WHICH scoring authority answered a SCORED/RECHECK
+	// event, so a forced grant is distinguishable from a live-scored one in
+	// the feed. Feed-level only: like GlobalSeq it never enters the
+	// TrajectoryHash (CONTRACT.md §6).
+	ScorerID         string `json:"scorer_id,omitempty"`          // SCORED/RECHECK only
+	IdempotencyKey   string `json:"idempotency_key,omitempty"`    // SHADOW_RECORDED + ACHIEVED only
+	RuleArtifactHash string `json:"rule_artifact_hash,omitempty"` // SHADOW_RECORDED + ACHIEVED only
+	IntentSpecHash   string `json:"intent_spec_hash,omitempty"`   // SHADOW_RECORDED + ACHIEVED only
+	TrajectoryHash   string `json:"trajectory_hash,omitempty"`    // SHADOW_RECORDED + ACHIEVED only
 }
 
 // Store is the durable, append-only JSONL feed. Single-process, mutex-guarded

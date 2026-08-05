@@ -35,12 +35,40 @@ type Criterion struct {
 // IdempotencyKey is the required at-most-once key for an intent.
 type IdempotencyKey string
 
+// Posture is the enforcement posture carried inside the ATTESTED spec payload
+// (never a config toggle). Zero value is invalid: an unknown posture refuses
+// (unevaluable-shaped absence), so a caller that forgets to resolve posture
+// authorizes nothing.
+type Posture string
+
+const (
+	PostureEnforce Posture = "enforce"
+	PostureShadow  Posture = "shadow"
+)
+
+// Resolution records how the spec content was obtained. Attested is set ONLY
+// by the plane resolver after signature verification and content-address
+// equality; the zero value refuses at the gate (P1: no verified spec, no
+// scoring). RevokedRef carries the ref of a verified revocation tombstone
+// found at declaration time.
+type Resolution struct {
+	Attested   bool
+	Source     string // "store" | "wire" | "" when unattested
+	KeyID      string // attester keyid (author of record)
+	RevokedRef string
+}
+
 // IntentSpecParams carries the criteria/thresholds/idempotency the gate consumes
 // directly (no artifact reads in this slice).
 type IntentSpecParams struct {
-	ActionClass      string // domain action class supplied by the declarant (see the repo's sample domain package for a worked example)
+	ActionClass      string // domain action class, from the ATTESTED payload
 	Criteria         []Criterion
-	IdempotencyScope string // e.g. "per-actor"
+	IdempotencyScope string  // e.g. "per-actor"
+	Posture          Posture // from the ATTESTED payload; unknown refuses
+	// HumanJudgment names the payload's unresolved deliberately-unquantified
+	// obligations. Non-empty NEVER authorizes: the gate refuses
+	// `unevaluable:human-judgment:<first>` — abstention as a success state.
+	HumanJudgment []string
 }
 
 // Intent is pure data. It carries NO mutable lifecycle state; the gate's runtime
@@ -50,7 +78,8 @@ type Intent struct {
 	Spec             IntentSpecParams
 	IdempotencyKey   IdempotencyKey // required; "" is invalid
 	RuleArtifactHash string         // opaque
-	IntentSpecHash   string         // opaque
+	IntentSpecHash   string         // content address of the attested spec payload
+	Resolution       Resolution     // how Spec was obtained; zero value refuses
 }
 
 // ID is deterministically derived from EpisodeSeed (stable across runs). It is

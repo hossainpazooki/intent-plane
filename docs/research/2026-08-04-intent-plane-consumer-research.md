@@ -308,6 +308,19 @@ what the verifier can prove, by stage
         deployment fact)
 ```
 
+**Addendum (2026-08-04, same day, post-amendment).** The plane-roles
+amendment landed after this memo was written and moves two rungs of this
+ladder: P1 is now closed GATE-SIDE at test key authority (the wire DTO
+carries no criteria field at all; criteria reach the gate only through
+signature verification + content-address equality, `CONTRACT.md` Section
+2.6), and `force_scores` is now guarded (`INTENT_UNSAFE_FORCE_SCORES=1` at
+boot, else a loud 400) AND witnessed (`scorer_id` on every SCORED/RECHECK
+feed record, hash-exempt) — the guard+witness pairing this memo's Q1 asked
+about, answered "both". Still true as written: R1 production key authority
+(envelopes stamp `key_authority: "test"`), R2, the refusal-hash commitment
+(Q2), and everything in Section 4's deferred rows. Sections 2d/3f above are
+kept as capture-time text; read them with this addendum.
+
 ### 2e. Why this consumer justifies byte-identity
 
 Every other consumer needs field *values*: the COMPASS settlement consumer

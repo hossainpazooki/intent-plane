@@ -38,6 +38,20 @@ Pre-existing non-actor senses (HTTP "client", Go-doc "caller", build-meta
 enforced by `core/internal/contractcheck/vocab_test.go` (required presence +
 forbidden list).
 
+**Role seats in code (2026-08-05 layering ruling; supersedes the plane-roles
+amendment's seating):** the core is a minimal SDK for agentic deployments and
+hosts NO human-authority seats. `core/` is the gate; `plane/` is the boundary
+artifact — envelope, payload, spec store, resolver, **verification only**:
+the core verifies what applications sign. The seats live in the APPLICATION
+built on the core — in this repo, `treasury/`: the author chassis is
+`treasury/authoring`; the attester's seat — the only production importer of
+`treasury/authority`'s key operations — is `treasury/control` (attest,
+publish, revoke, promote); `treasury/authority` holds every private-key
+operation. Declarants are external agents on the wire. The core structurally
+cannot sign and never imports `treasury/*` (`TestImportBoundary`,
+`TestKeyPossessionBoundary`): "layers bind to the artifact, never to each
+other" is the pinned import graph.
+
 ### §1.2 plane / gate / interface
 
 Three words, each answering a different question; any sentence self-selects its
@@ -132,19 +146,18 @@ verbatim (the tags in §2.3 ARE the wire contract); do not re-tag them in a DTO.
 
 ### §2.2 Declaration DTOs
 
+**2026-08-04 plane-roles amendment:** the wire carries NO criteria, no action
+class, and no posture. Those live ONLY in the attested spec payload and reach
+the gate through §2.6 resolution. `DisallowUnknownFields` makes the old shape
+a loud 400 (`json: unknown field "criteria"`) — P1 is closed at the type
+level: the field a declarant would smuggle criteria through does not exist.
+
 ```go
 package main // core/cmd/server
 
-type criterionDTO struct {
-	Name       string  `json:"name"`
-	Threshold  float64 `json:"threshold"`
-	Volatility string  `json:"volatility"` // "stable" | "volatile"
-}
-
+// specDTO carries ONLY the declarant-owned spec field.
 type specDTO struct {
-	ActionClass      string         `json:"action_class"`
-	Criteria         []criterionDTO `json:"criteria"`
-	IdempotencyScope string         `json:"idempotency_scope"`
+	IdempotencyScope string `json:"idempotency_scope"`
 }
 
 // forceScore carries the forced result for a single criterion, per phase. An
@@ -158,9 +171,10 @@ type intentRequest struct {
 	EpisodeSeed      string                `json:"episode_seed"`
 	IdempotencyKey   string                `json:"idempotency_key"`
 	RuleArtifactHash string                `json:"rule_artifact_hash"`
-	IntentSpecHash   string                `json:"intent_spec_hash"`
+	IntentSpecHash   string                `json:"intent_spec_hash"` // content address of the attested payload
 	Spec             specDTO               `json:"spec"`
-	ForceScores      map[string]forceScore `json:"force_scores"`
+	SpecEnvelope     json.RawMessage       `json:"spec_envelope,omitempty"` // hybrid wire path (§2.6)
+	ForceScores      map[string]forceScore `json:"force_scores"` // GUARDED (§2.5)
 }
 
 // intentResponse: the gate no longer settles, so there is no settlement field;
@@ -221,12 +235,20 @@ type Record struct {
 	IntentID         string `json:"intent_id"`
 	Type             string `json:"type"`
 	Detail           string `json:"detail,omitempty"`
-	IdempotencyKey   string `json:"idempotency_key,omitempty"`    // ACHIEVED only
-	RuleArtifactHash string `json:"rule_artifact_hash,omitempty"` // ACHIEVED only
-	IntentSpecHash   string `json:"intent_spec_hash,omitempty"`   // ACHIEVED only
-	TrajectoryHash   string `json:"trajectory_hash,omitempty"`    // ACHIEVED only
+	ScorerID         string `json:"scorer_id,omitempty"`          // SCORED/RECHECK only
+	IdempotencyKey   string `json:"idempotency_key,omitempty"`    // SHADOW_RECORDED + ACHIEVED
+	RuleArtifactHash string `json:"rule_artifact_hash,omitempty"` // SHADOW_RECORDED + ACHIEVED
+	IntentSpecHash   string `json:"intent_spec_hash,omitempty"`   // SHADOW_RECORDED + ACHIEVED
+	TrajectoryHash   string `json:"trajectory_hash,omitempty"`    // SHADOW_RECORDED + ACHIEVED
 }
 ```
+
+`scorer_id` ("forced" | "live") witnesses WHICH scoring authority answered a
+SCORED/RECHECK event, so a forced grant is never byte-indistinguishable from a
+live-scored one in the feed. Like `seq` it is **feed-level and hash-exempt**
+(§6): it never enters the in-memory event log or the TrajectoryHash, and the
+determinism-conditional-on-scores claim (§5.4 claim 10) holds over every field
+EXCEPT it.
 
 The four trace fields `{idempotency_key, rule_artifact_hash, intent_spec_hash,
 trajectory_hash}` plus `intent_id` and `seq` are the **cross-repo trace
@@ -413,15 +435,21 @@ it is free text and would poison determinism.
 | `INTENT_DATA_DIR` | gate | directory for `events.jsonl` + `idempotency.jsonl`; default `./data` (for `main` only — no test may write it) |
 | `INTENT_SCORER_URL` | gate | the FULL `/ml/evaluate` endpoint (e.g. `http://host:8000/ml/evaluate`). Unset ⟹ empty endpoint ⟹ every non-forced Score is `Unevaluable` ⟹ **the zero-config server authorizes nothing** |
 | `INTENT_ADDR` | gate | listen address; default `:8080` |
+| `INTENT_TRUST_ROOT` | gate | path to the trust-root file (`{"keys": {"<keyid>": "<b64 ed25519 pub>"}}`). Unset ⟹ EMPTY trust root ⟹ every spec is unattested ⟹ **the zero-config server authorizes nothing** (§2.6) |
+| `INTENT_SPEC_DIR` | gate | spec-store directory; default `<INTENT_DATA_DIR>/specs` |
+| `INTENT_UNSAFE_FORCE_SCORES` | gate | `1` ⟹ `force_scores` accepted (TEST POSTURE). Any other value ⟹ a request carrying `force_scores` is a loud 400. **Never set in production** |
 | `SCORER_HOST`, `SCORER_PORT` | scorer | uvicorn bind; defaults `127.0.0.1`, `8000` |
 | `SCORER_FACTS_JSON` | scorer | criterion → number JSON object. Unset ⟹ EMPTY fact map ⟹ every criterion `UNEVALUABLE` (§8) |
 | `SCORER_ARTIFACT_DIR`, `SCORER_ATLAS_INPUTS_DIR`, `SCORER_EXPORTED_AT_UNIX` | scorer | resolver config, all-or-nothing (§8) |
 | `SCORER_CONTRACT_DIR` | scorer tests | override for the §9 fixture directory |
 | `SCORER_ATLAS_DIR` | scorer tests | override for the wheel-lane ATLAS goldens |
 
-**Scorer selection in `core/cmd/server`:** `force_scores` present ⟹ the
-per-request forced scorer (test affordance); otherwise ONE boot-time shared
-`HTTPScorer` built from `INTENT_SCORER_URL`.
+**Scorer selection in `core/cmd/server`:** `force_scores` present AND the
+server booted with `INTENT_UNSAFE_FORCE_SCORES=1` ⟹ the per-request forced
+scorer (guarded test affordance; the feed witnesses it via `scorer_id:
+"forced"`). `force_scores` present WITHOUT the flag ⟹ 400 — never a silent
+ignore (a silently dropped bypass is a bypass in waiting). Otherwise ONE
+boot-time shared `HTTPScorer` built from `INTENT_SCORER_URL`.
 
 **Boot:** `dir := os.Getenv("INTENT_DATA_DIR")` defaulting to `"./data"`;
 `durable.Open(dir)`; `idempotency.OpenStore(dir)` (fatal on error). The durable
@@ -429,6 +457,49 @@ feed and the durable idempotency store are wired **ONCE at boot** and shared by
 every handler; the per-request `Gate` value is a thin wrapper over those shared
 singletons (it may be constructed per request to carry the per-request scorer;
 the **stores are never per-request**).
+
+
+### §2.6 Spec resolution — the plane (2026-08-04 amendment)
+
+The signed artifact and its stores live in the top-level `plane` package
+(core-side, verification only); the application seats `treasury/control`
+(attest, publish, revoke, promote — the ONLY production importer of
+`treasury/authority`) and `treasury/authoring` (drafts; holds no keys by
+import graph, `TestKeyPossessionBoundary`) operate on it.
+
+**Envelope (DSSE-shaped).** `{"payloadType", "payload" (b64), "signatures":
+[{"keyid", "sig", "key_authority"}]}`. The signature covers
+`PAE(payloadType, payload)` (DSSE v1 pre-authentication encoding), ed25519.
+`payloadType` is `application/vnd.intent-plane.spec+json` for specs and
+`application/vnd.intent-plane.revocation+json` for tombstones. `keyid` =
+first 16 hex of sha256(pubkey). **`key_authority` is `"test"` until ADR-0009
+production key authority lands (R1)** — every envelope says so.
+
+**Content address.** `intent_spec_hash` = lowercase-hex sha256 over the RAW
+payload bytes inside the envelope. The bytes a human attested are the bytes
+the gate executes: byte-for-byte is a hash equality, not a metaphor.
+
+**Spec payload** (strict-decoded; unknown fields refuse): `spec_version`,
+`action_class`, `enforcement_posture` (`enforce`|`shadow`), `criteria`
+(name/threshold/volatility), `source_pins` (name + `passage_sha256` of the
+exact policy passage), `named_unknowns` (unmapped provisions, surfaced not
+omitted), `human_judgment` (deliberately-unquantified obligations; any
+unresolved entry ⟹ the gate refuses, §3.3).
+
+**Spec store** (`INTENT_SPEC_DIR`): `<hash>.env.json` (published envelope),
+`<hash>.pin` (pin marker), `<hash>.revoked.json` (SIGNED revocation
+tombstone; a stranger-signed tombstone does not revoke). No wallclock
+anywhere. Publish is verify-then-write: unverifiable envelopes never enter.
+
+**Resolution (hybrid rule).** Given a declared `intent_spec_hash` and an
+optional wire `spec_envelope`: (1) a verified tombstone ⟹ `RevokedError`;
+(2) the store's envelope, if it verifies against the trust root AND its
+payload hashes to the claimed hash ⟹ resolve, source `store`; (3) a wire
+envelope ⟹ resolve source `wire` ONLY if it verifies against the SAME trust
+root, hashes to the claimed hash, AND that hash is pinned in the store —
+the store stays authoritative; (4) otherwise `ErrUnattested` ⟹ the gate
+refuses `unevaluable:unattested-spec`. Bare criteria cannot arrive at all:
+the wire DTO has no such field (§2.2).
 
 ---
 
@@ -449,9 +520,11 @@ const (
 	Achieved         State = "ACHIEVED"
 	Failed           State = "FAILED"
 	FailedAtDispatch State = "FAILED_AT_DISPATCH"
+	ShadowRecorded   State = "SHADOW_RECORDED" // ADR-0006 (Proposed): 2026-08-04 canon bump
 )
 
-// IsTerminal reports whether s is one of ACHIEVED, FAILED, FAILED_AT_DISPATCH.
+// IsTerminal reports whether s is one of ACHIEVED, FAILED, FAILED_AT_DISPATCH,
+// SHADOW_RECORDED.
 func (s State) IsTerminal() bool
 
 // IsValidTransition reports whether from->to is permitted by the lifecycle graph.
@@ -460,7 +533,7 @@ func (s State) IsTerminal() bool
 //   DECLARED  -> RESOLVING
 //   RESOLVING -> ACTIVE, FAILED
 //   ACTIVE    -> VERIFYING, FAILED
-//   VERIFYING -> ACHIEVED, FAILED, FAILED_AT_DISPATCH
+//   VERIFYING -> ACHIEVED, FAILED, FAILED_AT_DISPATCH, SHADOW_RECORDED
 // Terminal states have no outgoing edges.
 // FAILED_AT_DISPATCH is reachable ONLY from VERIFYING (table-enforced); the gate
 // further restricts it to the dispatch-edge path (code-enforced).
@@ -472,9 +545,17 @@ map-iteration order never reaches the event log.
 
 ### §3.2 Terminals
 
-`ACHIEVED`, `FAILED`, `FAILED_AT_DISPATCH`. **`FAILED_AT_DISPATCH` ⟹ no
-settlement event, every time** — no `ACHIEVED` record exists in the feed, so no
-consumer ever settles.
+`ACHIEVED`, `FAILED`, `FAILED_AT_DISPATCH`, `SHADOW_RECORDED`.
+**`FAILED_AT_DISPATCH` ⟹ no settlement event, every time** — no `ACHIEVED`
+record exists in the feed, so no consumer ever settles.
+
+**`SHADOW_RECORDED`** (ADR-0006, Proposed) is the terminal of a
+shadow-posture intent: fully scored — declaration AND dispatch-edge recheck —
+then durably recorded with the four trace fields, and **NOT authorized**: no
+`ACHIEVED` event, no idempotency-key reservation, no consumer ever settles.
+Enforcement posture lives INSIDE the signed payload (`enforcement_posture`);
+promotion shadow→enforce is a NEW attestation with a NEW hash — an authority
+act, never a config toggle (config-toggled shadow remains forbidden, R3).
 
 Refusals that occur before any lifecycle transition (absent key, thin spec)
 carry terminal `FAILED` in the `Result` without logging a `FAILED` transition
@@ -490,11 +571,23 @@ a **closed set** of reason cause classes:
 |---|---|---|
 | `volatile-recheck:<name>` | volatile fact drifted between scoring and dispatch | built |
 | `idempotency-collision` | key already reserved (near-duplicate) | built |
-| `revoked:<ref>` | the pinned spec was revoked between verification and dispatch | **reserved — doctrine ahead of demonstration (G5): no revocation signal reaches the gate today; the routing decision is recorded so the terminal set stays closed when one does** |
+| `revoked:<ref>` | the pinned spec was revoked between verification and dispatch | **ACTIVATED 2026-08-04** — the gate re-consults the revocation signal (the spec store's verified tombstones) at the dispatch edge (`gate.go` step 4a2, `TestRevokedBetweenVerifyAndDispatch`). The key is NOT reserved on this path. When the gate is built without a revocation checker, no signal reaches it — signal absence is not non-revocation being proven |
 
-A future revocation signal routes here, not to a new terminal: revocation
-observed at the edge IS a volatile-fact drift. **Adding any other cause class
-means amending this table first.**
+Revocation observed at the edge IS a volatile-fact drift, routed exactly as
+the reserved row recorded. **Adding any other cause class means amending this
+table first.**
+
+**Declaration-side refusal causes** (terminal `FAILED`, closed set; the first
+four append `UNEVALUABLE` only, before any lifecycle transition):
+
+| Cause | Meaning |
+|---|---|
+| `unevaluable:absent-key` | no idempotency key |
+| `unevaluable:unattested-spec` | no VERIFIED spec for the claimed hash — not in the store, no pinned+verified wire envelope (§2.6). Criteria that did not survive signature verification + content-address equality never reach the scorer |
+| `unevaluable:invalid-posture` | the attested payload's `enforcement_posture` is neither `enforce` nor `shadow` — the zero value never silently becomes enforce |
+| `unevaluable:human-judgment:<name>` | the attested payload carries an unresolved deliberately-unquantified obligation; abstention is the plane working (P6) |
+| `unevaluable:empty-criteria`, `unevaluable:invalid-volatility:<name>` | thin-spec defense (§4.2 step 1b) — attestation does not launder vacuity |
+| `revoked:<ref>` | a verified tombstone existed at declaration (resolver or live checker); the ref names it. Ordering: a revoked resolution WINS over unattested — collapsing it into `unevaluable:unattested-spec` would erase a fact the feed exists to witness (`TestRevokedResolutionWinsOverUnattested`) |
 
 ---
 
@@ -554,11 +647,36 @@ preserving the per-intent `Seq` and `TrajectoryHash` exactly.
    `i.IdempotencyKey == ""` ⟹ append `UNEVALUABLE` detail `absent-key`,
    terminal `FAILED`, reason `unevaluable:absent-key`, no settlement. Return.
 
-   **1b. Thin-spec defense.** Inserted after the absent-key refusal, before any
-   lifecycle transition or scoring. Spec resolution today happens at declaration
-   decode; these checks belong to **resolution** and move with it if resolution
-   ever moves (the pinned property is *a resolved spec with zero criteria never
-   reaches ACHIEVED, regardless of where resolution happens*).
+   **1a2. Revocation-at-resolution.** `Resolution.RevokedRef != ""` (the
+   resolver found a verified tombstone) ⟹ append `REVOKED` detail `<ref>`,
+   terminal `FAILED`, reason `revoked:<ref>`. Revocation WINS over unattested
+   (§3.3 ordering note).
+
+   **1a3. Attestation defense.** `!Resolution.Attested` ⟹ append
+   `UNEVALUABLE` detail `unattested-spec:<intent_spec_hash>`, terminal
+   `FAILED`, reason `unevaluable:unattested-spec`. **The scorer is never
+   consulted:** criteria that did not arrive through §2.6 resolution do not
+   exist as far as scoring is concerned (P1's fail-closed floor).
+
+   **1a3b. Revocation at declaration (live checker).** The gate's
+   `RevocationChecker` (the spec store) answers ⟹ append `REVOKED`, terminal
+   `FAILED`, reason `revoked:<ref>`.
+
+   **1a4. Posture defense.** `Spec.Posture` neither `enforce` nor `shadow`
+   (including the zero value) ⟹ append `UNEVALUABLE` detail
+   `invalid-posture:<raw>`, terminal `FAILED`, reason
+   `unevaluable:invalid-posture`. A posture default would be a config toggle
+   wearing a trench coat.
+
+   **1a5. Human-judgment defense.** `len(Spec.HumanJudgment) > 0` ⟹ append
+   `UNEVALUABLE` detail `human-judgment:<first>`, terminal `FAILED`, reason
+   `unevaluable:human-judgment:<first>`. Abstention as a success state (P6).
+
+   **1b. Thin-spec defense.** After the resolution defenses, before any
+   lifecycle transition or scoring. These checks apply to the RESOLVED payload
+   (the pinned property is *a resolved spec with zero criteria never
+   reaches ACHIEVED, regardless of where resolution happens*) — attestation
+   does not launder vacuity.
 
    - **Empty criteria** (`len(Spec.Criteria) == 0`, nil and empty alike): append
      `UNEVALUABLE` with detail `empty-criteria:<intent_spec_hash>` (the refusal
@@ -594,7 +712,20 @@ preserving the per-intent `Seq` and `TrajectoryHash` exactly.
       Return. (`Unevaluable` additionally appends a distinct `UNEVALUABLE`
       event before the terminal transition. **Stable criteria are NOT
       re-scored.**)
-   2. **Idempotency reserve:** `store.Reserve(i.ID(), i.IdempotencyKey)`. On
+   2. **Revocation re-check (4a2).** Re-consult the `RevocationChecker` at the
+      last moment before the consequence: a verified tombstone ⟹ append
+      `REVOKED`, transition to `FAILED_AT_DISPATCH`, reason `revoked:<ref>`,
+      no settlement, **key NOT reserved** (re-declaring after a fresh
+      attestation is legitimate). This is the §3.3 reserved cause class,
+      activated — the same last-moment discipline as volatile criteria,
+      applied to authority itself.
+   3. **Shadow posture (4a3).** `Spec.Posture == shadow` ⟹ append
+      `SHADOW_RECORDED` (detail `i.ID()`), compute the TrajectoryHash
+      INCLUDING it, `feed.Append` the SHADOW_RECORDED record carrying the four
+      trace fields, terminal `SHADOW_RECORDED`, reason `""`. **No idempotency
+      reservation, no ACHIEVED, nothing settles** — fully scored, durably
+      recorded, not authorized (§3.2).
+   4. **Idempotency reserve:** `store.Reserve(i.ID(), i.IdempotencyKey)`. On
       collision (`ok == false`) ⟹ transition to `FAILED_AT_DISPATCH`, reason
       `idempotency-collision`, no settlement. Return. On success append
       `IDEMPOTENCY_RESERVED` with detail = the key.
@@ -608,8 +739,9 @@ preserving the per-intent `Seq` and `TrajectoryHash` exactly.
    nothing in-process.**
 
 Event types appearing in the log: `DECLARED`, `RESOLVING`, `ACTIVE`,
-`VERIFYING`, `SCORED`, `RECHECK`, `UNEVALUABLE`, `IDEMPOTENCY_RESERVED`,
-`ACHIEVED`, `FAILED`, `FAILED_AT_DISPATCH`.
+`VERIFYING`, `SCORED`, `RECHECK`, `UNEVALUABLE`, `REVOKED`,
+`IDEMPOTENCY_RESERVED`, `ACHIEVED`, `FAILED`, `FAILED_AT_DISPATCH`,
+`SHADOW_RECORDED`.
 
 ### §4.3 Out-of-domain scores fail closed
 
@@ -734,6 +866,7 @@ advances its cursor to `max(GlobalSeq)` seen, and calls `ref.OnAchieved`.
 | **(e) Idempotency collision** | Two intents, same key, different `IntentSpecHash`, **SHARED** store ⟹ first `ACHIEVED`, second `FAILED_AT_DISPATCH` `idempotency-collision`. The feed has **exactly one** ACHIEVED record for the key; the consumer records **exactly one** settlement. **Restart clause:** `Close`+`OpenStore` the idempotency store from the same dir, submit a third intent with the same key ⟹ still `idempotency-collision`; reopen the feed, re-poll the consumer from cursor 0 ⟹ still one ACHIEVED, no new settlement (at-most-once **across process restart**). |
 | **(f) Terminal separation** | For every `FAILED` / `FAILED_AT_DISPATCH` result, `feed.Since(0,"ACHIEVED")` contains **no** record for that intent (the feed is the successor to `Settlement == nil`). The ACHIEVED path has exactly one ACHIEVED record, ordered **after** the `RECHECK` record of the volatile criterion (asserted by `IntentSeq` / `GlobalSeq` order in `ByIntent`). |
 | **(g) Thin-spec defense** | `TestFailClosedEmptyCriteria`, `TestFailClosedInvalidVolatility`, `TestFailClosedOutOfDomainScore` — with wire twins `TestEmptyCriteriaRefusedOverWire`, `TestInvalidVolatilityRefusedOverWire` in `core/cmd/server/main_test.go`. All demonstrated red against the pre-amendment gate, then green. |
+| **(h) Scorer-identity witness + wire guards** | `TestDeterminismConditionalOnScores` asserts `scorer_id` POSITIVELY on every SCORED/RECHECK record ("forced"/"live") before its equality carve-out — deleting the stamping fails the suite (plant-proven in a temp copy, 2026-08-05; before this row the deletion left every gate green). The loud-400 wire guards are pinned by `TestOldWireShapeCriteria400`, `TestTopLevelCriteria400`, `TestForceScoresRefusedWithoutFlag` (incl. the empty-map form) in `core/cmd/server/wire_guard_test.go`. Discipline note: a new §2.3 wire field MUST land with its §5.3 row in the same amendment — this row exists because `scorer_id` initially did not. |
 
 `core/cmd/server/main_test.go` drives the shared-store server via `httptest`,
 using `t.Setenv("INTENT_DATA_DIR", t.TempDir())` and a boot helper that builds
@@ -808,6 +941,24 @@ and order-sensitive.
 
 ## §7 Package boundary
 
+**2026-08-04 plane-roles amendment, re-seated by the 2026-08-05 layering
+ruling:** the CORE owns exactly one tree outside `core/` beside
+`core/cmd/server`: `plane` (envelope, payload, store, resolver —
+verification only), the boundary artifact the gate consumes. The authority
+seats live in the APPLICATION: `treasury/authority` (EVERY private-key
+operation; production-importable ONLY from `treasury/control`,
+`TestKeyPossessionBoundary`), `treasury/control`
+(attest/publish/revoke/promote), `treasury/authoring` (drafting chassis;
+holds no keys by import graph). Production edges: `core/cmd/server → plane`,
+`treasury/authority → plane`, `treasury/control → {plane,
+treasury/authority}`, `treasury/authoring → plane`. The core never imports
+`treasury/*` — applications depend on the SDK, never the reverse. The
+mechanical pin (`boundary_test.go`) is two-part and deliberately asymmetric:
+CORE packages are pinned exactly, by table; application trees are pinned BY
+RULE, never by name — the checks under `core/` carry no application
+vocabulary (core-neutrality keeps that true), so a second application tree
+is governed the day it appears, without amending the core's tables.
+
 ### §7.1 Package set and import adjacency
 
 The intra-repo import adjacency and the package set are **pinned** by
@@ -820,7 +971,8 @@ Production edges (intra-module only):
 
 | Package | May import |
 |---|---|
-| `core/cmd/server` | `core/internal/{durable, gate, idempotency, intent, scoring}` |
+| `core/cmd/server` | `core/internal/{durable, gate, idempotency, intent, scoring}`, `plane` |
+| `plane` | — (leaf) |
 | `core/internal/gate` | `core/internal/{audit, durable, idempotency, intent, lifecycle, scoring}` |
 | `core/internal/adapter` | `core/internal/intent` |
 | `core/internal/idempotency` | `core/internal/intent` |
@@ -833,10 +985,19 @@ Production edges (intra-module only):
 
 Sanctioned test-only extras (edges that exist ONLY in `_test.go` files):
 `core/internal/gate` → `core/internal/{adapter, lifecycle}`; `core/cmd/server` →
-`core/internal/lifecycle`.
+`core/internal/lifecycle`. Core tests sign fixtures with TEST-LOCAL helpers
+(`testKeyFile` in `core/cmd/server/main_test.go` and `plane/plane_test.go`) —
+a core test importing an application tree is a layering violation, not a
+sanctionable extra.
 
-Only `core/cmd/server` may live outside `core/internal/`. `contractcheck` ships
-no production code and no package imports it.
+Application trees (rule-pinned, current instantiation `treasury/`): an
+application package may import only `plane` and packages within its own
+tree — never `core/internal/*` or `core/cmd/*`; within any tree, only
+`<tree>/control` may import `<tree>/authority` (`TestKeyPossessionBoundary`).
+
+Outside `core/internal/` live only `core/cmd/server`, `plane` (core), and
+application trees. `contractcheck` ships no production code and no package
+imports it.
 
 ### §7.2 Pinned package surfaces
 

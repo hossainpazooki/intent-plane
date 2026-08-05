@@ -1,6 +1,6 @@
 {
-  "episode_seed": "quickstart-payment-002",
-  "idempotency_key": "pay-2026-08-alpha-001",
+  "episode_seed": "quickstart-payment-006",
+  "idempotency_key": "pay-2026-08-alpha-006",
   "rule_artifact_hash": "",
   "intent_spec_hash": "@SPEC_HASH@",
   "spec": {

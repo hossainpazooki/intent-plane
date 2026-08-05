@@ -1,12 +1,15 @@
 # treasury — a demonstration deployment of the intent plane
 
 This directory shows the intent plane doing its job in a concrete domain:
-**payment controls**. An agent (the declarant) declares a payment intent with
-criteria — a balance floor, an fx-rate floor, a declared idempotency key. The
-plane's gate scores those criteria against facts served by the scorer, refuses
-anything unevaluable, reserves the key at the dispatch edge, and emits exactly
-one durable `ACHIEVED` record that a settlement consumer can observe. Value
-moves only after that record exists.
+**payment controls**. The control role's key attests a spec — a balance
+floor, an fx-rate floor — and publishes it into the spec store; an agent (the
+declarant) then declares a payment intent citing that spec's content address
+plus a declared idempotency key (the wire carries no criteria at all). The
+plane's gate resolves the signed spec, scores its criteria against facts
+served by the scorer, refuses anything unevaluable or unattested, reserves
+the key at the dispatch edge, and emits exactly one durable `ACHIEVED` record
+that a settlement consumer can observe. Value moves only after that record
+exists.
 
 Nothing in `core/` knows any of these words: *payment*, *balance*, *fx rate*
 live only here (mechanically enforced by `TestCoreNeutrality`). The one
@@ -25,25 +28,33 @@ Run from the repo root:
 
 Requirements: Go and Python 3.11+. The script creates the scorer venv on
 first run, boots the scorer with `facts.json` (`balance: 250.0`,
-`fx_rate: 1.30`) injected via `SCORER_FACTS_JSON`, builds and boots the gate
-with `INTENT_SCORER_URL`, runs the probe ladder, and tears everything down.
-Expected final line: `RESULT: 6/6 probes passed` — every probe asserts its
-terminal, so the demo doubles as a smoke gate.
+`fx_rate: 1.30`) injected via `SCORER_FACTS_JSON`, then runs the plane leg —
+keygen (test key authority), trust root, attest + publish the four spec
+drafts in `specs/` — builds and boots the gate with `INTENT_SCORER_URL` and
+`INTENT_TRUST_ROOT`, runs the probe ladder (including a live signed
+revocation), and tears everything down. Expected final line:
+`RESULT: 8/8 probes passed` — every probe asserts its terminal, so the demo
+doubles as a smoke gate.
 
 ## The probe ladder
 
 | # | Probe | Expected | What it demonstrates |
 |---|---|---|---|
-| 1 | Declare a payment within limits | `ACHIEVED` | the full lifecycle against real scored facts; one durable record |
-| 2 | Near-duplicate: same key, one changed field | `FAILED_AT_DISPATCH` `idempotency-collision` | at-most-once by construction, not by adapter dedup |
-| 3 | Declare over-threshold | `FAILED`, reason names `balance` | criteria actually bind |
-| 4 | Kill the scorer, declare again | `FAILED` `unevaluable:` | fail-closed on outage, demonstrated live |
-| 5 | Declare with empty criteria | `FAILED` `unevaluable:empty-criteria` | thin-spec defense: no criteria is never a pass |
-| 6 | Read `GET /v2/events?since=0` | exactly one `ACHIEVED` | emit-and-observe: consumers settle only from the feed |
+| 1 | Declare a payment within limits (signed spec) | `ACHIEVED` | the full lifecycle against an attested spec and real scored facts; one durable record |
+| 2 | Near-duplicate: same key, different spec | `FAILED_AT_DISPATCH` `idempotency-collision` | at-most-once by construction, not by adapter dedup |
+| 3 | Declare over-threshold | `FAILED`, reason names `balance` (and NOT `unevaluable`) | criteria actually bind |
+| 4 | Declare citing a hash nobody attested | `FAILED` `unevaluable:unattested-spec` | no signature, no scoring — P1's fail-closed floor |
+| 5 | Revoke the within-limits spec (signed tombstone), declare against it | `FAILED` `revoked:quickstart-pull` | authority is revocable; the tombstone's ref is witnessed |
+| 6 | Kill the scorer, declare again | `FAILED` `unevaluable:` | fail-closed on outage, demonstrated live |
+| 7 | Declare an attested-but-thin spec (zero criteria) | `FAILED` `unevaluable:empty-criteria` | attestation does not launder vacuity |
+| 8 | Read `GET /v2/events?since=0` | exactly one `ACHIEVED` | emit-and-observe: consumers settle only from the feed |
 
-`force_scores` (the documented test affordance on the wire) is deliberately
-absent from this showcase. Artifact verification is also absent here — the
-scorer runs with the null resolver and says so on the wire
+`force_scores` (the guarded test affordance) is deliberately absent from this
+showcase — the gate here boots WITHOUT `INTENT_UNSAFE_FORCE_SCORES`, so the
+wire would refuse it anyway. The plane's spec attestation runs live above at
+test key authority (`key_authority: "test"` until ADR-0009); what remains
+absent is the SCORER-side ATLAS artifact verification — the scorer runs with
+the null resolver and says so on the wire
 (`resolver=null: verification skipped`), which is the honest boundary between
 this quickstart and the extended demonstration below.
 

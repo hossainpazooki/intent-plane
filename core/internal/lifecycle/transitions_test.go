@@ -12,6 +12,7 @@ var allStates = []State{
 	Achieved,
 	Failed,
 	FailedAtDispatch,
+	ShadowRecorded,
 }
 
 // permittedEdges enumerates EXACTLY the edges the contract permits. Anything not
@@ -25,6 +26,7 @@ var permittedEdges = []struct{ from, to State }{
 	{Verifying, Achieved},
 	{Verifying, Failed},
 	{Verifying, FailedAtDispatch},
+	{Verifying, ShadowRecorded},
 }
 
 func isPermitted(from, to State) bool {

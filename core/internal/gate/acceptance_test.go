@@ -45,10 +45,15 @@ func mkIntent(seed, key, specHash string, crits ...intent.Criterion) intent.Inte
 			ActionClass:      "sample-action",
 			Criteria:         crits,
 			IdempotencyScope: "per-actor",
+			Posture:          intent.PostureEnforce,
 		},
 		IdempotencyKey:   intent.IdempotencyKey(key),
 		RuleArtifactHash: "rule-" + specHash,
 		IntentSpecHash:   specHash,
+		// The package tests exercise gate semantics POST-resolution: attested,
+		// enforce posture. The unattested/revoked/shadow paths are covered in
+		// plane_acceptance_test.go.
+		Resolution: intent.Resolution{Attested: true, Source: "store", KeyID: "test-key"},
 	}
 }
 
