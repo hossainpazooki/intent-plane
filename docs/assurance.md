@@ -14,7 +14,7 @@ The claim grows with the mechanism, and each stage is separable in review:
 
 | Stage | What the record proves | Standing |
 |---|---|---|
-| Today, from the feed alone | This record is self-consistent and its hashes recompute — in your language, not ours. (Precisely: `ACHIEVED` records carry their trajectory hash for matching; refusal terminals are recompute-only today — committing refusal hashes to the feed is an open decision row, not yet built.) | available now |
+| Today, from the feed alone | This record is self-consistent and its hashes recompute — in your language, not ours. (Precisely: `ACHIEVED` records carry their trajectory hash for matching. The refusal-hash commitment — every completed authorization, refusals included, committing its trajectory hash — is **built and test-pinned in the testing monorepo (2026-08-08)** but not yet ported to this SDK's gate; until the port, this repo's refusal terminals are recompute-only.) | available now |
 | + signed specifications | The gate executed the signed specification: criteria cannot arrive except through signature verification and content-address equality. | enforced (test key authority) |
 | + record signing | This record was not rewritten: the feed itself becomes tamper-evident. | staged (R1) |
 | + workload identity | This gate, and only this gate, produced it: sole-writer as a deployment fact. | staged (R2) |
@@ -32,15 +32,22 @@ the entire feed, sequence numbers gap-free; bind records to declarations via
 the deterministic intent identity; and check the witnesses — which scoring
 authority answered (`scorer_id`), which key attested the specification.
 
-**Stated honestly:** the ~200-line independent verifier is a design target
-this encoding was built for, **not a shipped package** — the reference
-Go+Python verifier twins and a golden feed fixture (frozen `events.jsonl`
-plus expected hashes and verdicts) are recorded future work. An independent
-implementation must mind the traps the fixture will pin: length prefixes are
-**byte** lengths (not code points), `scorer_id` and the global `seq` are
-**hash-exempt** feed fields, and the store tolerates CRLF and a torn trailing
-line. Verdicts should be tri-state like the gate itself — verified, refuted,
-unverifiable — and unverifiable never passes.
+**Stated honestly:** the independent verifier is **built at test grade in the
+testing monorepo (2026-08-08), not yet shipped in this SDK**. What exists
+there: Go + Python verifier twins whose reports are byte-compared, a golden
+feed fixture with a tampered standing mutant (one flipped byte must refute,
+forever, in both languages), frozen expected reports, an import pin proving
+the verifier tree runs none of the gate's code, and a live recompute probe in
+the reference quickstart (both twins over a real feed, byte-identical).
+Porting the package into this SDK is the named next step. The traps an
+independent implementation must mind are now pinned by that fixture rather
+than only listed here: length prefixes are **byte** lengths (not code
+points), `scorer_id` and the global `seq` are **hash-exempt** feed fields,
+and the store tolerates CRLF and a torn trailing line. Verdicts are tri-state
+like the gate itself — verified, refuted, unverifiable — and unverifiable
+never passes (the twins' first live run refuted a correct feed by demanding
+an optional field; the ruling that absence-of-an-optional-passthrough is
+never a finding is itself fixture-pinned).
 
 ## Claim-to-mechanism map
 
