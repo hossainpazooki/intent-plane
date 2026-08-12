@@ -54,6 +54,39 @@ flowchart LR
     class REF bad;
 ```
 
+## The decision flow, state by state
+
+```mermaid
+flowchart TD
+    D[DECLARED] -->|key required| K{idempotency<br/>key present?}
+    K -->|no — absent key| F[FAILED]
+    K -->|yes| TS{spec resolved?<br/>attested · not revoked ·<br/>posture known · criteria<br/>non-empty · volatility known}
+    TS -->|"unattested · revoked ·<br/>thin — refuses, scorer<br/>never consulted"| F
+    TS -->|verified| R[RESOLVING] --> A[ACTIVE] --> V[VERIFYING]
+    V -->|criterion failed / unevaluable| F
+    V -->|all criteria pass| VR{volatile re-check ·<br/>revocation re-check}
+    VR -->|fact drifted / spec pulled| FD[FAILED_AT_DISPATCH]
+    VR -->|holds — shadow posture| SH["SHADOW_RECORDED — durable record,<br/>fully scored, NOT authorized (ADR-0006)"]
+    VR -->|holds — enforce posture| IDEM{{"reserve idempotency key<br/>declared · first-class criterion"}}
+    IDEM -->|collision — duplicate action| FD
+    IDEM -->|fresh key| ACH["ACHIEVED — one durable record<br/>consumers settle from it"]
+
+    classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
+    classDef idem fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
+    classDef good fill:#86efac,stroke:#15803d,stroke-width:2px,color:#111827;
+    classDef bad fill:#fca5a5,stroke:#b91c1c,stroke-width:2px,color:#111827;
+    classDef durable fill:#93c5fd,stroke:#1d4ed8,stroke-width:2px,color:#111827;
+    class D,R,A,V,VR neutral;
+    class K,TS,IDEM idem;
+    class ACH good;
+    class SH durable;
+    class F,FD bad;
+```
+
+The terminal-position record of every completed authorization — grant,
+shadow, or refusal — carries its trajectory hash (`CONTRACT.md` §2.3), so a
+trimmed or edited log is detectable by recomputation.
+
 ## Exactly-once by construction
 
 What makes two actions "the same action" is a **declared idempotency key,

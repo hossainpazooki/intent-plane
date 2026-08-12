@@ -9,43 +9,36 @@ Before an agent moves money, files a report, or triggers a workflow, it must
 specification a human **signed** — or refuses. Every decision lands as
 exactly one durable record, built to be independently recomputed later.
 
-- **What ships here:** a Go authorization gate (stdlib only) + a Python
-  criterion-scoring service + **the independent verifier** (Go package +
-  CLI + a stdlib-only Python twin, `verifier/`) + the contract
-  (`CONTRACT.md`) + byte-frozen cross-language wire and feed fixtures. This
-  is the SDK — small, domain-agnostic, verification-only (it holds no
-  signing keys, structurally).
-- **Who it's for:** the platform team wrapping an agent runtime (embed once,
-  every agent inherits it) — and the accountability function behind them
-  (audit, compliance, model risk), who re-derive every record from the feed
-  with no trust in this code: their package is `verifier/`, import-pinned to
-  run none of the gate's code.
-- **What it refuses:** anything unevaluable. Missing data, an unsigned or
-  revoked spec, an empty criteria set, a duplicate action — all deny. The
-  worst case is an action that wrongly waits, never one that wrongly
-  executes.
+## Two sides, one record
+
+This system is bought by one function and installed by another, and the repo
+is laid out for both:
+
+| | who | their question | their artifact |
+|---|---|---|---|
+| **demand side** | the accountability function — audit, compliance, model risk, a counterparty's diligence | "prove what your agents did, without asking us to trust your code" | **`verifier/`, ships here**: a Go package + CLI and a stdlib-only Python twin that re-derive every record from the feed alone — import-pinned to run none of the gate's code |
+| **supply side** | the platform team wrapping the agent runtime ("how our agents call tools") | "one integration point, every agent inherits it" | the declarant seat: four wire routes + the feed cursor ([`docs/integration.md`](docs/integration.md)); a declarant SDK is the named next package and will be born in this repo |
+
+The demand side *requires*; the supply side *satisfies the requirement* by
+embedding once at the framework layer. What connects them is not a report
+either side writes — it is the record itself, examinable by construction:
 
 ```mermaid
-flowchart LR
-    subgraph RT["agent runtime — the platform team embeds once"]
-        AG["agent proposes"] --> SDK["framework layer<br/>declare · await terminal ·<br/>proceed or surface"]
-    end
-    SDK -->|"POST /v2/intents<br/>(the declarant)"| G["gate<br/>sole ACHIEVED authority<br/>fail-closed · deterministic"]
-    ATT["attester (human officer)<br/>signs the policy spec"] -.->|"signed, content-addressed,<br/>revocable artifact"| G
-    G -->|"synchronous terminal:<br/>ACHIEVED or a closed refusal set"| SDK
-    G -->|"exactly one durable record<br/>per authorized action"| FEED[("append-only feed<br/>fsync per append · cursor seq")]
-    FEED -->|"poll by cursor —<br/>settle only from observed ACHIEVED"| S["settlement consumer<br/>at-most-once ledger"]
-    FEED -->|"re-derive hashes · replay lifecycle ·<br/>count grants — no trust in the gate"| V["verifier<br/>audit · compliance · model risk"]
-
-    classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
-    classDef durable fill:#93c5fd,stroke:#1d4ed8,stroke-width:2px,color:#111827;
-    classDef star fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
-    class AG,SDK,G,S neutral;
-    class ATT neutral;
-    class FEED durable;
-    class V star;
-    style RT fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+flowchart TB
+    D["<b>demand side — the buyer</b><br/>accountability function: audit,<br/>compliance, model risk, counterparty"]
+    S["<b>supply side — the integrator</b><br/>platform team wrapping the agent<br/>runtime — how our agents call tools"]
+    P["<b>the intent plane</b><br/>agents propose → gate disposes (fail-closed, deterministic)<br/>→ exactly one durable ACHIEVED record per action<br/>→ append-only feed, polled by cursor"]
+    D -->|"requires<br/>examinable records"| S
+    D -->|"runs the verifier package<br/>against the records<br/>(no trust in the gate)"| P
+    S -->|"embeds the declarant SDK<br/>once, at the framework layer"| P
 ```
+
+(The full system picture — attester, settlement consumer, the wire seams —
+is drawn in [`docs/assurance.md`](docs/assurance.md).)
+
+**What it refuses:** anything unevaluable. Missing data, an unsigned or
+revoked spec, an empty criteria set, a duplicate action — all deny. The
+worst case is an action that wrongly waits, never one that wrongly executes.
 
 ## Three commitments
 
@@ -67,34 +60,22 @@ Details, the signed artifact, and the invariants: [`docs/architecture.md`](docs/
 ## The decision flow
 
 ```mermaid
-flowchart TD
-    D[DECLARED] -->|key required| K{idempotency<br/>key present?}
-    K -->|no — absent key| F[FAILED]
-    K -->|yes| TS{spec resolved?<br/>attested · not revoked ·<br/>posture known · criteria<br/>non-empty · volatility known}
-    TS -->|"unattested · revoked ·<br/>thin — refuses, scorer<br/>never consulted"| F
-    TS -->|verified| R[RESOLVING] --> A[ACTIVE] --> V[VERIFYING]
-    V -->|criterion failed / unevaluable| F
-    V -->|all criteria pass| VR{volatile re-check ·<br/>revocation re-check}
-    VR -->|fact drifted / spec pulled| FD[FAILED_AT_DISPATCH]
-    VR -->|holds — shadow posture| SH["SHADOW_RECORDED — durable record,<br/>fully scored, NOT authorized (ADR-0006)"]
-    VR -->|holds — enforce posture| IDEM{{"reserve idempotency key<br/>declared · first-class criterion"}}
-    IDEM -->|collision — duplicate action| FD
-    IDEM -->|fresh key| ACH["ACHIEVED — one durable record<br/>consumers settle from it"]
-
-    classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
-    classDef idem fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
-    classDef good fill:#86efac,stroke:#15803d,stroke-width:2px,color:#111827;
-    classDef bad fill:#fca5a5,stroke:#b91c1c,stroke-width:2px,color:#111827;
-    classDef durable fill:#93c5fd,stroke:#1d4ed8,stroke-width:2px,color:#111827;
-    class D,R,A,V,VR neutral;
-    class K,TS,IDEM idem;
-    class ACH good;
-    class SH durable;
-    class F,FD bad;
+flowchart LR
+    D[DECLARED] --> R[RESOLVING] --> A[ACTIVE] --> V[VERIFYING]
+    V -->|"all pass · re-checks hold ·<br/>fresh key"| ACH["ACHIEVED<br/>one durable record;<br/>consumers settle from it"]
+    V -->|"shadow posture"| SH["SHADOW_RECORDED<br/>fully scored, durably<br/>recorded, NOT authorized"]
+    V -->|"drifted fact · pulled spec ·<br/>duplicate key"| FAD[FAILED_AT_DISPATCH]
+    D -->|"refused at the door: missing key,<br/>unattested / revoked / thin spec"| F[FAILED]
+    V -->|"criterion failed or unevaluable<br/>(scorer unreachable denies)"| F
 ```
 
-No `FAILED` or `FAILED_AT_DISPATCH` intent ever leaves an `ACHIEVED` record
-in the feed — a refused or duplicate intent means **no value moved**.
+Every branch fails closed. No `FAILED` or `FAILED_AT_DISPATCH` intent ever
+leaves an `ACHIEVED` record in the feed — a refused or duplicate intent
+means **no value moved**. And the terminal-position record of *every*
+completed authorization — grant, shadow, or refusal — carries its
+trajectory hash, so a trimmed or edited log is detectable by recomputation.
+The full state machine, branch by branch, is drawn in
+[`docs/architecture.md`](docs/architecture.md).
 
 ## Try it
 
@@ -104,6 +85,14 @@ cd core/scorer && .venv/Scripts/python -m pytest           # the Python scorer
 go test ./core/internal/contractcheck -count=1 -v          # the contract pins (boundary, vocabulary, neutrality)
 go test ./verifier -count=1 -v                             # the Go verifier over the frozen feed fixtures
 core/scorer/.venv/Scripts/python -m pytest verifier/pyverifier   # the Python twin, same bytes
+```
+
+Or take the demand side's seat directly — hand the CLI a feed and let it
+re-derive everything:
+
+```bash
+go run ./verifier/cmd/intent-verify core/contract/feed/events-good.jsonl      # RESULT: VERIFIED, exit 0
+go run ./verifier/cmd/intent-verify core/contract/feed/events-tampered.jsonl  # one flipped byte: REFUTED, exit 1
 ```
 
 The one-command live demonstration — real gate, real scorer, a 9-probe
@@ -122,7 +111,7 @@ intent-plane/
 │                    #   the scorer (Python, core/scorer), wire + feed fixtures
 ├── plane/           # the signed artifact: envelope, spec store, resolver
 │                    #   (verification ONLY — no signing seat in this repo)
-├── verifier/        # the independent examiner: Go pkg + cmd/intent-verify +
+├── verifier/        # the demand side's package: Go pkg + cmd/intent-verify +
 │                    #   Python twin (pyverifier/); imports NOTHING from this
 │                    #   module outside its own tree (§7.1)
 └── docs/            # architecture · assurance · integration
@@ -140,8 +129,8 @@ demonstration stay in the monorepo.
 
 | If you are… | Read |
 |---|---|
-| deciding whether the records can be trusted | [`docs/assurance.md`](docs/assurance.md) — what is enforced & pinned vs test-grade vs staged, and what an audit firm can re-run |
-| embedding the gate in an agent runtime | [`docs/integration.md`](docs/integration.md) — the synchronous terminal, key discipline, feed consumption |
+| the accountability function, deciding whether the records can be trusted | [`docs/assurance.md`](docs/assurance.md) — what is enforced & pinned vs test-grade vs staged, and what an audit firm can re-run |
+| the platform team, embedding the gate in an agent runtime | [`docs/integration.md`](docs/integration.md) — the synchronous terminal, key discipline, feed consumption |
 | going deep on the mechanism | [`docs/architecture.md`](docs/architecture.md) + [`CONTRACT.md`](CONTRACT.md) |
 
 **Status, honestly:** the gate, scorer seam, signed-spec resolution, durable
@@ -149,5 +138,6 @@ feed, refusal-hash commitment, and the verifier twins are built and
 test-pinned; key authority is test-grade until ADR-0009 (every signature
 says so); workload identity and record signing are staged, not built — so
 the verifier proves the record self-consistent, not never-rewritten. The
-full claim-by-claim standing — nothing here asks to be believed — is in
-[`docs/assurance.md`](docs/assurance.md).
+declarant SDK is planned, not built: today the supply side codes against
+the wire. The full claim-by-claim standing — nothing here asks to be
+believed — is in [`docs/assurance.md`](docs/assurance.md).

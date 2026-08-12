@@ -8,6 +8,39 @@ fsync before every success, exactly one authorization record per key — none
 of it buys anything at decision time. It pays off in exactly one scenario:
 when someone who does **not** trust the gate re-derives the record afterward.
 
+## Where the examiner sits
+
+```mermaid
+flowchart LR
+    subgraph SUPPLY["supply side — the platform team embeds once"]
+        AG["agent proposes"] --> FW["framework layer (the declarant)<br/>declare · await terminal ·<br/>proceed or surface"]
+    end
+    subgraph PLANE["the intent plane"]
+        G["gate — sole ACHIEVED authority<br/>fail-closed · deterministic"]
+        FEED[("append-only feed<br/>fsync per append · cursor seq")]
+        G -->|"exactly one durable record<br/>per authorized action"| FEED
+    end
+    subgraph DEMAND["demand side — the accountability function"]
+        V["verifier — audit · compliance ·<br/>model risk (runs verifier/,<br/>shipped in this repo)"]
+    end
+    ATT["attester (human officer)<br/>signs the policy spec"] -.->|"signed, content-addressed,<br/>revocable artifact"| G
+    FW -->|"POST /v2/intents"| G
+    G -->|"synchronous terminal:<br/>ACHIEVED or a closed refusal set"| FW
+    FEED -->|"poll by cursor — settle only<br/>from observed ACHIEVED"| S["settlement consumer<br/>at-most-once ledger"]
+    FEED -->|"re-derive hashes · replay lifecycle ·<br/>count grants — no trust in the gate"| V
+    DEMAND -.->|"requires examinable records"| SUPPLY
+
+    classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
+    classDef durable fill:#93c5fd,stroke:#1d4ed8,stroke-width:2px,color:#111827;
+    classDef star fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
+    class AG,FW,G,S,ATT neutral;
+    class FEED durable;
+    class V star;
+    style SUPPLY fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+    style DEMAND fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+    style PLANE fill:#f8fafc,stroke:#94a3b8,color:#111827;
+```
+
 ## What the record proves, by stage
 
 The claim grows with the mechanism, and each stage is separable in review:
