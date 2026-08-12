@@ -14,7 +14,7 @@ The claim grows with the mechanism, and each stage is separable in review:
 
 | Stage | What the record proves | Standing |
 |---|---|---|
-| Today, from the feed alone | This record is self-consistent and its hashes recompute — in your language, not ours. (Precisely: `ACHIEVED` records carry their trajectory hash for matching. The refusal-hash commitment — every completed authorization, refusals included, committing its trajectory hash — is **built and test-pinned in the testing monorepo (2026-08-08)** but not yet ported to this SDK's gate; until the port, this repo's refusal terminals are recompute-only.) | available now |
+| Today, from the feed alone | This record is self-consistent and its hashes recompute — in your language, not ours. The terminal-position record of **every** completed authorization — grants, shadow records, and refusals alike — carries its trajectory hash (`CONTRACT.md` §2.3 refusal-hash commitment, pinned by `TestTerminalHashCommitment`), so a trimmed or edited refusal log is detectable by recomputation. | available now |
 | + signed specifications | The gate executed the signed specification: criteria cannot arrive except through signature verification and content-address equality. | enforced (test key authority) |
 | + record signing | This record was not rewritten: the feed itself becomes tamper-evident. | staged (R1) |
 | + workload identity | This gate, and only this gate, produced it: sole-writer as a deployment fact. | staged (R2) |
@@ -32,22 +32,29 @@ the entire feed, sequence numbers gap-free; bind records to declarations via
 the deterministic intent identity; and check the witnesses — which scoring
 authority answered (`scorer_id`), which key attested the specification.
 
-**Stated honestly:** the independent verifier is **built at test grade in the
-testing monorepo (2026-08-08), not yet shipped in this SDK**. What exists
-there: Go + Python verifier twins whose reports are byte-compared, a golden
-feed fixture with a tampered standing mutant (one flipped byte must refute,
-forever, in both languages), frozen expected reports, an import pin proving
-the verifier tree runs none of the gate's code, and a live recompute probe in
-the reference quickstart (both twins over a real feed, byte-identical).
-Porting the package into this SDK is the named next step. The traps an
-independent implementation must mind are now pinned by that fixture rather
-than only listed here: length prefixes are **byte** lengths (not code
-points), `scorer_id` and the global `seq` are **hash-exempt** feed fields,
-and the store tolerates CRLF and a torn trailing line. Verdicts are tri-state
-like the gate itself — verified, refuted, unverifiable — and unverifiable
-never passes (the twins' first live run refuted a correct feed by demanding
-an optional field; the ruling that absence-of-an-optional-passthrough is
-never a finding is itself fixture-pinned).
+**And they don't have to start from prose:** this SDK ships the independent
+verifier (`verifier/` — a Go package plus `cmd/intent-verify`, and a
+stdlib-only Python twin in `verifier/pyverifier/`). The twins' canonical
+reports are byte-compared; a golden feed fixture ships with a tampered
+standing mutant (one flipped byte must refute, forever, in both languages)
+and frozen expected reports under `core/contract/feed/` (`CONTRACT.md` §9.1);
+an import pin proves the verifier tree runs none of the gate's code
+(§7.1 — it imports nothing from this module outside its own tree); and the
+testing monorepo's quickstart probe 9 runs both twins over a live feed and
+byte-compares their reports. The traps an independent implementation must
+mind are pinned by that fixture rather than only listed here: length prefixes
+are **byte** lengths (not code points), `scorer_id` and the global `seq` are
+**hash-exempt** feed fields, and the store tolerates CRLF and a torn trailing
+line. Verdicts are tri-state like the gate itself — verified, refuted,
+unverifiable — and unverifiable never passes (the twins' first live run
+refuted a correct feed by demanding an optional field; the ruling that
+absence-of-an-optional-passthrough is never a finding is itself
+fixture-pinned).
+
+**Stated honestly, what it proves today:** the record is self-consistent and
+its hashes recompute. Not yet provable: that the log was never rewritten
+(record signing, R1) or that the gate was the sole writer (workload
+identity, R2) — those rows below carry their own standing.
 
 ## Claim-to-mechanism map
 
@@ -74,6 +81,8 @@ normative role vocabulary — declarant / author / attester / gate — is
 | Staged rollout, itself signed — shadow until promoted | built · test-grade | Enforcement posture lives inside the signed payload; shadow runs are fully scored and durably recorded but authorize nothing and reserve nothing (`SHADOW_RECORDED`). Promotion is a fresh attestation producing a new hash — an authority act, never a config toggle. The governance decision recording this terminal (ADR-0006) is Proposed, not ratified. |
 | Judgment routed to humans; abstention is the system working (P6) | gate-side **enforced & pinned** · chassis application-side | `Unevaluable` is a first-class score, and an unresolved `human_judgment` entry refuses (`unevaluable:human-judgment:<name>`, `TestHumanJudgmentRefuses`) — an invented number cannot replace a human decision. The authoring chassis that routes obligations into those entries is application-side (reference: the testing monorepo) and its guarantees are not yet test-backed there; the drafting intelligence that fills the seat is future work. |
 | Thin-spec defense — attestation does not launder vacuity (P7) | **enforced & pinned** | Zero criteria ⇒ `FAILED unevaluable:empty-criteria`; unknown volatility ⇒ `FAILED unevaluable:invalid-volatility:<name>` — both refuse BEFORE any scoring (`TestFailClosedEmptyCriteria`, `TestFailClosedInvalidVolatility`); "no criterion failed" is never satisfied by "no criterion existed". |
+| Every completed authorization commits to its trajectory — refusals included | **enforced & pinned** | The terminal-position feed record carries `trajectory_hash` computed over the complete per-intent log including the final event; no non-terminal record carries one (§2.3; `TestTerminalHashCommitment`, mutant: stamp the hash one event early). Residual, honestly: step-1 refusals log no `FAILED` transition *event* — the trajectory is committed, but for those paths the terminal classification lives in the synchronous response, not the feed. |
+| The record can be re-derived without trusting the gate | built · test-grade | `verifier/` twins (Go + stdlib-only Python), byte-compared canonical reports, tri-state verdicts where unverifiable never passes (§9.1); frozen good/tampered fixtures with the tampered mutant standing guard (`core/contract/feed/`), generator-tested against the real gate so the fixture can never drift; §7.1 import pin — the examiner's recomputation is a genuinely second implementation. What it proves is bounded by the stage table above: self-consistency now; never-rewritten and sole-writer arrive with R1/R2. |
 
 ## Known production-posture gaps, recorded rather than hidden
 
@@ -82,23 +91,28 @@ under `docs/ROADMAP.md`.) `force_scores` is guarded and witnessed but remains
 a total scoring bypass wherever the boot flag is set; key authority is
 test-grade until ADR-0009; workload identity (R2) is asserted; the feed read
 surface is unauthenticated by design (network isolation is a deployment
-decision); refusal terminals do not yet commit their trajectory hash to the
-feed; with more than one key in a trust root, revocation authority is flat
+decision); with more than one key in a trust root, revocation authority is flat
 (any root key revokes any spec) — a who-may-revoke theory is ADR-0009 scope.
 
 ## What a reviewer can re-run — and where
 
-**In this repo:** the import-boundary gate pins the core package graph and
-the name-free key-possession rule; the determinism gate replays a full
-lifecycle and byte-compares the records; the tamper gate flips one payload
-byte and watches verification refuse; the contractcheck six (boundary,
-key-possession, neutrality, vocabulary presence, forbidden nouns, retired
-noun) run inside the named gate (see the root README's build section).
+**In this repo:** the import-boundary gate pins the core package graph, the
+name-free key-possession rule, and the verifier tree's imports-nothing rule;
+the determinism gate replays a full lifecycle and byte-compares the records;
+the tamper gate flips one payload byte and watches verification refuse; the
+feed-fixture lanes run both verifier twins over the frozen good and tampered
+fixtures and byte-compare their reports (`go test ./verifier`,
+`core/scorer/.venv` python `-m pytest verifier/pyverifier`), and the
+generator test re-drives the good fixture through the real gate; the
+contractcheck six (boundary, key-possession, neutrality, vocabulary presence,
+forbidden nouns, retired noun) run inside the named gate (see the root
+README's build section).
 
 **In the testing monorepo** (`github.com/hossainpazooki/treasury-intent-controller`):
 the end-to-end probe ladder runs the whole plane — keygen, attest, publish,
 authorize against a signed spec, collide on idempotency, refuse an unattested
 hash, revoke and watch the reason surface, kill the scorer and watch the
-system deny — in one command, self-asserting, against the live scoring
-service (`treasury/quickstart.ps1` / `.sh`, expected final line
-`RESULT: 8/8 probes passed`).
+system deny, then re-derive the whole live feed with both verifier twins and
+byte-compare their reports — in one command, self-asserting, against the
+live scoring service (`treasury/quickstart.ps1` / `.sh`, expected final line
+`RESULT: 9/9 probes passed`).

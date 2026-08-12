@@ -10,13 +10,16 @@ specification a human **signed** — or refuses. Every decision lands as
 exactly one durable record, built to be independently recomputed later.
 
 - **What ships here:** a Go authorization gate (stdlib only) + a Python
-  criterion-scoring service + the contract (`CONTRACT.md`) + byte-frozen
-  cross-language wire fixtures. This is the SDK — small, domain-agnostic,
-  verification-only (it holds no signing keys, structurally).
+  criterion-scoring service + **the independent verifier** (Go package +
+  CLI + a stdlib-only Python twin, `verifier/`) + the contract
+  (`CONTRACT.md`) + byte-frozen cross-language wire and feed fixtures. This
+  is the SDK — small, domain-agnostic, verification-only (it holds no
+  signing keys, structurally).
 - **Who it's for:** the platform team wrapping an agent runtime (embed once,
   every agent inherits it) — and the accountability function behind them
-  (audit, compliance, model risk), who can re-derive every record from the
-  feed with no trust in this code.
+  (audit, compliance, model risk), who re-derive every record from the feed
+  with no trust in this code: their package is `verifier/`, import-pinned to
+  run none of the gate's code.
 - **What it refuses:** anything unevaluable. Missing data, an unsigned or
   revoked spec, an empty criteria set, a duplicate action — all deny. The
   worst case is an action that wrongly waits, never one that wrongly
@@ -96,16 +99,19 @@ in the feed — a refused or duplicate intent means **no value moved**.
 ## Try it
 
 ```bash
-go build ./... && go vet ./... && go test ./... -count=1   # the Go gate (add -race via WSL on Windows)
+go build ./... && go vet ./... && go test ./... -count=1   # the Go gate + verifier (add -race via WSL on Windows)
 cd core/scorer && .venv/Scripts/python -m pytest           # the Python scorer
 go test ./core/internal/contractcheck -count=1 -v          # the contract pins (boundary, vocabulary, neutrality)
+go test ./verifier -count=1 -v                             # the Go verifier over the frozen feed fixtures
+core/scorer/.venv/Scripts/python -m pytest verifier/pyverifier   # the Python twin, same bytes
 ```
 
-The one-command live demonstration — real gate, real scorer, an 8-probe
-ladder from keygen through attestation, revocation, and a scorer outage —
-lives with the reference application in the **testing monorepo**:
+The one-command live demonstration — real gate, real scorer, a 9-probe
+ladder from keygen through attestation, revocation, a scorer outage, and a
+final recompute of the whole live feed by both verifier twins — lives with
+the reference application in the **testing monorepo**:
 [`treasury-intent-controller`](https://github.com/hossainpazooki/treasury-intent-controller)
-(`treasury/quickstart.ps1` / `.sh` → `RESULT: 8/8 probes passed`).
+(`treasury/quickstart.ps1` / `.sh` → `RESULT: 9/9 probes passed`).
 
 ## Layout
 
@@ -113,15 +119,22 @@ lives with the reference application in the **testing monorepo**:
 intent-plane/
 ├── CONTRACT.md      # the single current-state contract — the source of truth
 ├── core/            # the gate (Go, core/cmd/server + core/internal/…),
-│                    #   the scorer (Python, core/scorer), wire fixtures
+│                    #   the scorer (Python, core/scorer), wire + feed fixtures
 ├── plane/           # the signed artifact: envelope, spec store, resolver
 │                    #   (verification ONLY — no signing seat in this repo)
+├── verifier/        # the independent examiner: Go pkg + cmd/intent-verify +
+│                    #   Python twin (pyverifier/); imports NOTHING from this
+│                    #   module outside its own tree (§7.1)
 └── docs/            # architecture · assurance · integration
 ```
 
-This repo is the **published SDK**; experimentation, the application seats
-(authority / control / authoring), and the demonstration live in the testing
-monorepo and are ported here once they settle.
+This repo is the **published SDK**, and ownership runs per tree: the
+consumer-facing packages (the verifier today; the declarant SDK when it
+lands) are born and evolve **here** — the testing monorepo consumes them
+back for its live probes. Plane internals (gate, scorer, `plane/`) are
+experimented on in the testing monorepo and ported here once they settle.
+The application seats (authority / control / authoring) and the live
+demonstration stay in the monorepo.
 
 ## Read next
 
@@ -131,8 +144,10 @@ monorepo and are ported here once they settle.
 | embedding the gate in an agent runtime | [`docs/integration.md`](docs/integration.md) — the synchronous terminal, key discipline, feed consumption |
 | going deep on the mechanism | [`docs/architecture.md`](docs/architecture.md) + [`CONTRACT.md`](CONTRACT.md) |
 
-**Status, honestly:** the gate, scorer seam, signed-spec resolution, and
-durable feed are built and test-pinned; key authority is test-grade until
-ADR-0009 (every signature says so); workload identity and record signing are
-staged, not built. The full claim-by-claim standing — nothing here asks to be
-believed — is in [`docs/assurance.md`](docs/assurance.md).
+**Status, honestly:** the gate, scorer seam, signed-spec resolution, durable
+feed, refusal-hash commitment, and the verifier twins are built and
+test-pinned; key authority is test-grade until ADR-0009 (every signature
+says so); workload identity and record signing are staged, not built — so
+the verifier proves the record self-consistent, not never-rewritten. The
+full claim-by-claim standing — nothing here asks to be believed — is in
+[`docs/assurance.md`](docs/assurance.md).
