@@ -24,17 +24,17 @@ embedding once at the framework layer. What connects them is not a report
 either side writes — it is the record itself, examinable by construction:
 
 ```mermaid
-flowchart TB
-    D["<b>demand side — the buyer</b><br/>accountability function: audit,<br/>compliance, model risk, counterparty"]
-    S["<b>supply side — the integrator</b><br/>platform team wrapping the agent<br/>runtime — how our agents call tools"]
-    P["<b>the intent plane</b><br/>agents propose → gate disposes (fail-closed, deterministic)<br/>→ exactly one durable ACHIEVED record per action<br/>→ append-only feed, polled by cursor"]
-    D -->|"requires<br/>examinable records"| S
-    D -->|"runs the verifier package<br/>against the records<br/>(no trust in the gate)"| P
-    S -->|"embeds the declarant SDK<br/>once, at the framework layer"| P
+flowchart TD
+    D["demand side — the buyer<br/>audit · compliance · model risk"]
+    S["supply side — the integrator<br/>platform team, agent runtime"]
+    P["the intent plane<br/>agents propose · the gate disposes<br/>one durable record · append-only feed"]
+    D -->|requires examinable records| S
+    S -->|embeds the declarant, once| P
+    D -->|runs verifier/ — no trust in the gate| P
 ```
 
-(The full system picture — attester, settlement consumer, the wire seams —
-is drawn in [`docs/assurance.md`](docs/assurance.md).)
+(The full system picture — settlement consumer, wire seams, where each
+package sits — is drawn in [`docs/assurance.md`](docs/assurance.md).)
 
 **What it refuses:** anything unevaluable. Missing data, an unsigned or
 revoked spec, an empty criteria set, a duplicate action — all deny. The
@@ -55,26 +55,65 @@ worst case is an action that wrongly waits, never one that wrongly executes.
    are re-verified at the last moment before the consequence fires, and the
    decision and its audit record are one byte-exact event.
 
+The authority chain behind commitments 1 and 2 — who may draft, who may
+sign, what the gate will execute:
+
+```mermaid
+flowchart LR
+    A["author — drafts the spec<br/>holds no keys"]
+    ATT["attester — human officer<br/>author of record"]
+    ART["signed artifact<br/>sealed · content-addressed · revocable"]
+    G["gate<br/>executes exactly the signed bytes"]
+    A -->|proposed payload| ATT
+    ATT -->|signs · publishes| ART
+    ART -->|resolved by hash equality| G
+    ATT -.->|signed tombstone revokes| G
+```
+
 Details, the signed artifact, and the invariants: [`docs/architecture.md`](docs/architecture.md).
 
 ## The decision flow
 
-```mermaid
-flowchart LR
-    D[DECLARED] --> R[RESOLVING] --> A[ACTIVE] --> V[VERIFYING]
-    V -->|"all pass · re-checks hold ·<br/>fresh key"| ACH["ACHIEVED<br/>one durable record;<br/>consumers settle from it"]
-    V -->|"shadow posture"| SH["SHADOW_RECORDED<br/>fully scored, durably<br/>recorded, NOT authorized"]
-    V -->|"drifted fact · pulled spec ·<br/>duplicate key"| FAD[FAILED_AT_DISPATCH]
-    D -->|"refused at the door: missing key,<br/>unattested / revoked / thin spec"| F[FAILED]
-    V -->|"criterion failed or unevaluable<br/>(scorer unreachable denies)"| F
 ```
+DECLARED -> RESOLVING -> ACTIVE -> VERIFYING
+         -> ACHIEVED | SHADOW_RECORDED | FAILED_AT_DISPATCH | FAILED
+```
+
+- **ACHIEVED** — one durable record; consumers settle from it.
+- **SHADOW_RECORDED** — fully scored, durably recorded, not authorized.
+- **FAILED_AT_DISPATCH** — a drifted fact, pulled spec, or duplicate key at
+  the last moment before the consequence fires.
+- **FAILED** — anything unevaluable, at any step: missing key, unattested /
+  revoked / thin spec, unreachable scorer, failed criterion.
+
+The state machine, exactly as the lifecycle table permits it (terminal
+states have no outgoing edges; `FAILED_AT_DISPATCH` is reachable only from
+`VERIFYING`):
+
+```mermaid
+stateDiagram-v2
+    [*] --> DECLARED
+    DECLARED --> RESOLVING
+    RESOLVING --> ACTIVE
+    RESOLVING --> FAILED
+    ACTIVE --> VERIFYING
+    ACTIVE --> FAILED
+    VERIFYING --> ACHIEVED: all pass · fresh key
+    VERIFYING --> SHADOW_RECORDED: shadow posture
+    VERIFYING --> FAILED_AT_DISPATCH: drift · duplicate key
+    VERIFYING --> FAILED: fail · unevaluable
+```
+
+(Refusals at the door — a missing key, an unattested, revoked, or thin
+spec — answer `FAILED` synchronously at declaration; the scorer is never
+consulted.)
 
 Every branch fails closed. No `FAILED` or `FAILED_AT_DISPATCH` intent ever
 leaves an `ACHIEVED` record in the feed — a refused or duplicate intent
 means **no value moved**. And the terminal-position record of *every*
 completed authorization — grant, shadow, or refusal — carries its
 trajectory hash, so a trimmed or edited log is detectable by recomputation.
-The full state machine, branch by branch, is drawn in
+The decision flow with every guard, branch by branch, is drawn in
 [`docs/architecture.md`](docs/architecture.md).
 
 ## Try it
