@@ -35,13 +35,15 @@ so is the authority itself (a spec revoked mid-flight stops at the edge). The
 authorization and its audit record are one byte-exact event: the record
 cannot disagree with the decision, and the decision cannot exist without the
 record. The worst case of a drafting error or a data outage is an action that
-wrongly waits — never one that wrongly executes.
+wrongly waits — never one that wrongly executes (with the guarded test
+affordance disabled, its boot flag never set in production — the residual is
+recorded in `docs/assurance.md`).
 
 ```mermaid
 flowchart LR
     A["agent declares<br/>an intent"] --> G{"gate scores it<br/>fail-closed"}
     G -->|"all criteria pass ·<br/>idempotency key fresh"| ACH["ACHIEVED<br/>exactly one durable record"]
-    G -->|"any fail · any unevaluable ·<br/>duplicate key · unattested,<br/>revoked, or thin spec"| REF["refused<br/>no record — nothing settles"]
+    G -->|"any fail · any unevaluable ·<br/>duplicate key · unattested,<br/>revoked, or thin spec"| REF["refused — durably recorded<br/>with its trajectory hash;<br/>no ACHIEVED record, nothing settles"]
     ACH -->|"observed from the feed,<br/>never from a callback"| S["settle / re-verify"]
 
     classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
@@ -87,7 +89,7 @@ The terminal-position record of every completed authorization — grant,
 shadow, or refusal — carries its trajectory hash (`CONTRACT.md` §2.3), so a
 trimmed or edited log is detectable by recomputation.
 
-## Exactly-once by construction
+## At-most-once by construction
 
 What makes two actions "the same action" is a **declared idempotency key,
 treated as a first-class gate criterion** — not adapter-local dedup logic.

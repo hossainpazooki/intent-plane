@@ -60,7 +60,7 @@ an authorization from its event records (the hash path never touches JSON,
 which is what makes cross-language recomputation exact rather than
 approximate); replay the lifecycle as a walk of the closed transition graph,
 every refusal reason drawn from a closed, pinned vocabulary; prove
-at-most-once — exactly one authorization record per idempotency key across
+at-most-once — at most one authorization record per idempotency key across
 the entire feed, sequence numbers gap-free; bind records to declarations via
 the deterministic intent identity; and check the witnesses — which scoring
 authority answered (`scorer_id`), which key attested the specification.
@@ -73,7 +73,7 @@ standing mutant (one flipped byte must refute, forever, in both languages)
 and frozen expected reports under `core/contract/feed/` (`CONTRACT.md` §9.1);
 an import pin proves the verifier tree runs none of the gate's code
 (§7.1 — it imports nothing from this module outside its own tree); and the
-testing monorepo's quickstart probe 9 runs both twins over a live feed and
+testing monorepo's quickstart probe 10 runs both twins over a live feed and
 byte-compares their reports. The traps an independent implementation must
 mind are pinned by that fixture rather than only listed here: length prefixes
 are **byte** lengths (not code points), `scorer_id` and the global `seq` are
@@ -116,6 +116,7 @@ normative role vocabulary — declarant / author / attester / gate — is
 | Thin-spec defense — attestation does not launder vacuity (P7) | **enforced & pinned** | Zero criteria ⇒ `FAILED unevaluable:empty-criteria`; unknown volatility ⇒ `FAILED unevaluable:invalid-volatility:<name>` — both refuse BEFORE any scoring (`TestFailClosedEmptyCriteria`, `TestFailClosedInvalidVolatility`); "no criterion failed" is never satisfied by "no criterion existed". |
 | Every completed authorization commits to its trajectory — refusals included | **enforced & pinned** | The terminal-position feed record carries `trajectory_hash` computed over the complete per-intent log including the final event; no non-terminal record carries one (§2.3; `TestTerminalHashCommitment`, mutant: stamp the hash one event early). Residual, honestly: step-1 refusals log no `FAILED` transition *event* — the trajectory is committed, but for those paths the terminal classification lives in the synchronous response, not the feed. |
 | The record can be re-derived without trusting the gate | built · test-grade | `verifier/` twins (Go + stdlib-only Python), byte-compared canonical reports, tri-state verdicts where unverifiable never passes (§9.1); frozen good/tampered fixtures with the tampered mutant standing guard (`core/contract/feed/`), generator-tested against the real gate so the fixture can never drift; §7.1 import pin — the examiner's recomputation is a genuinely second implementation. What it proves is bounded by the stage table above: self-consistency now; never-rewritten and sole-writer arrive with R1/R2. |
+| The embedding discipline ships as code — declare once, inherit everywhere | built · test-grade | `declarant/` (Go, §2.7): exact §2.2 wire marshal pinned by golden request bytes; `DeriveKey` makes idempotency keys deterministic from action identity; terminal classification is TOTAL over the closed cause vocabulary with a fail-closed `Unknown` (mutant: dropping the fallback goes red); the 500 edge consults the per-intent feed BEFORE deciding (`httptest`-pinned call order); `force_scores` exists in no declarant type (reflection-pinned). Proven live by the monorepo's quickstart probe 6 (declare ⇒ `PROCEED`, same-key re-declare ⇒ `ALREADY_RESERVED`). Go only — a Python declarant twin is recorded future work. |
 
 ## Known production-posture gaps, recorded rather than hidden
 
@@ -130,13 +131,16 @@ decision); with more than one key in a trust root, revocation authority is flat
 ## What a reviewer can re-run — and where
 
 **In this repo:** the import-boundary gate pins the core package graph, the
-name-free key-possession rule, and the verifier tree's imports-nothing rule;
+name-free key-possession rule, and the consumer trees' (verifier, declarant)
+imports-nothing rule;
 the determinism gate replays a full lifecycle and byte-compares the records;
 the tamper gate flips one payload byte and watches verification refuse; the
 feed-fixture lanes run both verifier twins over the frozen good and tampered
 fixtures and byte-compare their reports (`go test ./verifier`,
 `core/scorer/.venv` python `-m pytest verifier/pyverifier`), and the
 generator test re-drives the good fixture through the real gate; the
+declarant lanes pin the golden request bytes, the total classification, and
+the 500-edge call order (`go test ./declarant`); the
 contractcheck six (boundary, key-possession, neutrality, vocabulary presence,
 forbidden nouns, retired noun) run inside the named gate (see the root
 README's build section).
@@ -144,8 +148,10 @@ README's build section).
 **In the testing monorepo** (`github.com/hossainpazooki/treasury-intent-controller`):
 the end-to-end probe ladder runs the whole plane — keygen, attest, publish,
 authorize against a signed spec, collide on idempotency, refuse an unattested
-hash, revoke and watch the reason surface, kill the scorer and watch the
-system deny, then re-derive the whole live feed with both verifier twins and
-byte-compare their reports — in one command, self-asserting, against the
-live scoring service (`treasury/quickstart.ps1` / `.sh`, expected final line
-`RESULT: 9/9 probes passed`).
+hash, revoke and watch the reason surface, declare through the declarant SDK
+(derived key ⇒ `PROCEED`, same key again ⇒ `ALREADY_RESERVED`), kill the
+scorer and watch the system deny, then re-derive the whole live feed with
+both verifier twins and byte-compare their reports — in one command,
+self-asserting, against the live scoring service
+(`treasury/quickstart.ps1` / `.sh`, expected final line
+`RESULT: 10/10 probes passed`).

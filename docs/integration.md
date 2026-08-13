@@ -4,6 +4,14 @@ For the team that owns how agents call tools. You embed the gate once at the
 framework layer and every agent inherits it: declare the intent, await the
 terminal, proceed on `ACHIEVED` or surface the refusal.
 
+**The disciplines below ship as code**: the `declarant/` package (Go,
+`CONTRACT.md` §2.7) — exact wire marshal, `DeriveKey`, a total terminal
+classification with fail-closed `Unknown`, the 500-edge feed consult, and the
+cursor poll — plus the `intent-declare` CLI. `force_scores` exists in no
+declarant type. This page remains the normative walkthrough; the package is
+its executable form, proven live against the reference plane (the monorepo's
+quickstart probe 6).
+
 ## The shape of the integration
 
 Declaration is **one synchronous request** (`POST /v2/intents`) that returns
@@ -21,7 +29,7 @@ for attested specs). Criteria never ride the wire — the field does not exist.
 
 1. **Derive the idempotency key deterministically from the action's
    identity.** Never a fresh UUID per attempt — that deletes the
-   exactly-once property. Never too coarse — reservations are permanent, so
+   at-most-once (dedup) property. Never too coarse — reservations are permanent, so
    a key that collides across genuinely distinct calls bricks the second
    call forever. A workable shape:
    `<scope>:<agent-run-id>:<tool-name>:<sha256(canonical-args)>`.
