@@ -26,21 +26,21 @@ either side writes — it is the record itself, examinable by construction:
 ```mermaid
 flowchart TD
     subgraph SUPPLY["supply side — the integrator"]
-        S["platform team<br/>agent runtime"]
-        DECL["declarant/<br/>embed once —<br/>every agent inherits it"]
+        S["the platform team —<br/>how agents call tools"]
+        DECL["declarant/<br/>one integration point,<br/>every agent inherits it"]
         S --- DECL
     end
     subgraph PLANE["the intent plane"]
-        G{"gate<br/>agents propose ·<br/>the gate disposes"}
+        G{"the gate<br/>agents propose —<br/>it disposes"}
         FEED[("append-only feed<br/>one durable record<br/>per decision")]
         G -->|fail-closed| FEED
     end
     subgraph DEMAND["demand side — the buyer"]
-        V["verifier/<br/>re-derives every record"]
-        D["audit · compliance<br/>model risk"]
+        V["verifier/<br/>re-derives every record<br/>from the feed alone"]
+        D["audit · compliance ·<br/>model risk · diligence"]
         V --- D
     end
-    DECL -->|"declare · await terminal"| G
+    DECL -->|"declare · await the terminal"| G
     FEED -->|"recompute — no trust<br/>in the gate"| V
     D -.->|"requires examinable records"| S
 
