@@ -24,7 +24,7 @@ embedding once at the framework layer. What connects them is not a report
 either side writes — it is the record itself, examinable by construction:
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph SUPPLY["supply side — the integrator"]
         S["platform team<br/>agent runtime"]
         DECL["declarant/<br/>embed once —<br/>every agent inherits it"]
