@@ -62,3 +62,32 @@ posture only and is refused unless the server booted with
 `INTENT_UNSAFE_FORCE_SCORES=1`; never expose it in any SDK type, sample, or
 doc. Zero-config is fail-closed: a gate booted with no trust root and no
 scorer URL authorizes nothing.
+
+## Forwarding the record to observability — logs index, gates decide
+
+The durable feed is a line-delimited JSON file
+(`$INTENT_DATA_DIR/events.jsonl`, one event per line, fsynced per append).
+Any log shipper can tail it into your observability stack — a Datadog agent
+logs entry, a fluent-bit tail, a vector source — with **zero SDK change**:
+the file is already the export surface, and each line parses as structured
+JSON without a grok pattern.
+
+Two rules keep the forwarded copy honest:
+
+1. **The copy is an index, never an authority.** Dashboards, monitors, and
+   alerts on the forwarded stream are how operators watch the gate; the
+   feed on disk remains the sole authority, and anything that matters is
+   re-derived from it (`GET /v2/events?since=cursor`, or the verifier).
+   Nothing downstream of the shipper may feed back into a decision.
+2. **Emission can never touch decisions — structurally.** The gate does not
+   know the shipper exists; a dropped, lagging, or misconfigured forwarder
+   cannot block or fail an authorization. Push-based trace export (OTel) is
+   staged (R4 in the project roadmap) and deliberately absent today.
+
+Useful monitors fall out of the event vocabulary: rate of `FAILED`
+refusals by cause prefix (`unevaluable:*` spikes mean the scorer or a fact
+source is down — remember refusal is the system working, so alert on the
+*rate change*, not the refusal), any `FAILED_AT_DISPATCH`
+(`idempotency-collision` or volatile drift — both worth eyes), and
+`SHADOW_RECORDED` volume during a staged rollout (the governance record for
+that terminal is still Proposed, not settled — `docs/assurance.md`).
