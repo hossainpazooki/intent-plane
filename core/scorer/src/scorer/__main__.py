@@ -2,7 +2,7 @@
 
 Resolver configuration (all-or-nothing; CONTRACT.md §8):
   SCORER_ARTIFACT_DIR        directory of .kew artifacts (indexed by content hash)
-  SCORER_ATLAS_INPUTS_DIR    keydir.json / context.json / policy.json / registry.json
+  SCORER_VERIFY_INPUTS_DIR    keydir.json / context.json / policy.json / registry.json
   SCORER_EXPORTED_AT_UNIX    explicit export instant (no wallclock)
 Unset => NullResolver (verification skipped, visibly noted in basis).
 Partially set, or set without the ke-artifact-py wheel => refuse to boot: a
@@ -28,14 +28,14 @@ from .resolver import ArtifactResolver
 
 def resolver_from_env() -> ArtifactResolver | None:
     artifact_dir = os.environ.get("SCORER_ARTIFACT_DIR")
-    inputs_dir = os.environ.get("SCORER_ATLAS_INPUTS_DIR")
+    inputs_dir = os.environ.get("SCORER_VERIFY_INPUTS_DIR")
     exported_at = os.environ.get("SCORER_EXPORTED_AT_UNIX")
     if not (artifact_dir or inputs_dir or exported_at):
         return None  # NullResolver default: skip is visible on the wire
     if not (artifact_dir and inputs_dir and exported_at):
         raise SystemExit(
             "resolver config incomplete: set ALL of SCORER_ARTIFACT_DIR, "
-            "SCORER_ATLAS_INPUTS_DIR, SCORER_EXPORTED_AT_UNIX — or none"
+            "SCORER_VERIFY_INPUTS_DIR, SCORER_EXPORTED_AT_UNIX — or none"
         )
     # Import (and thereby require the wheel) only on the configured path; an
     # absent wheel here must crash the boot loudly, never downgrade to a skip.

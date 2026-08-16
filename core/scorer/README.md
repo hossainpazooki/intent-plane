@@ -41,16 +41,16 @@ overrides). Absent fixtures SKIP visibly — a skip is NOT a pass.
 - **[built — 2026-07-12]** the wheel-backed `KeArtifactResolver`
   (`ke-artifact-py`, Linux/CI only; verify runs in an executor for the GIL
   caveat). Verifies the governing artifacts by content address against a
-  `.kew` store + the four ATLAS verify inputs; fail-closed on absent hash,
+  `.kew` store + the four rule-engine verify inputs; fail-closed on absent hash,
   rejected verdict, or re-address mismatch. Configure via
-  `SCORER_ARTIFACT_DIR` + `SCORER_ATLAS_INPUTS_DIR` + `SCORER_EXPORTED_AT_UNIX`
+  `SCORER_ARTIFACT_DIR` + `SCORER_VERIFY_INPUTS_DIR` + `SCORER_EXPORTED_AT_UNIX`
   (all-or-nothing; a partially-configured server refuses to boot). Its pytest
-  lane runs against the real ATLAS goldens on Linux and skips visibly
-  elsewhere. NOTE: green requires the ATLAS R7 kind-aware fix (ADR-0022,
-  regulatory-rule-engine) — before it, no IntentSpec could verify at all.
+  lane runs against the real rule-engine goldens on Linux and skips visibly
+  elsewhere. NOTE: green requires the rule-engine's kind-aware verification
+  fix — before it, no IntentSpec could verify at all.
 - **[recorded debt]** one resolver = ONE verification environment (one
   policy/context set). Mixed-kind requests (a rule hash + a spec hash from
   different corpora) fail closed rather than verify both; the fix is a
-  binding-side kind-aware environment, an ATLAS follow-up.
+  binding-side kind-aware environment, an rule-engine follow-up.
 - **[planned — later slice]** a live fact source. `StaticFactSource` is the
   demo configuration and is labeled as such; do not fake a live one.

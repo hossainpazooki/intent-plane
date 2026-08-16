@@ -3,7 +3,7 @@
 The ke-artifact-py reader is INJECTED behind ArtifactResolver and exercised
 only where the wheel exists (Linux/CI) — the wheel does not build on Windows
 BY DESIGN; never rebuild a binding. `KeArtifactResolver` is the wheel-backed
-reader slice (post-Stage-A, ATLAS PR #13); `NullResolver` stays the
+reader slice (post-Stage-A); `NullResolver` stays the
 Windows-local default, and the app records the skip in basis so
 implemented-vs-planned stays visible on the wire.
 """
@@ -83,7 +83,7 @@ class KeArtifactResolver:
         exported_at_unix: int,
         binding: Any | None = None,
     ) -> "KeArtifactResolver":
-        """Construct from an inputs directory holding the four ATLAS verify
+        """Construct from an inputs directory holding the four rule-engine verify
         inputs by their contract-test names: keydir.json, context.json,
         policy.json, registry.json (see regulatory-rule-engine
         scripts/contract-inputs/)."""

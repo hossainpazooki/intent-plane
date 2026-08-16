@@ -165,10 +165,12 @@ go run ./verifier/cmd/intent-verify core/contract/feed/events-tampered.jsonl  # 
 The one-command live demonstration — real gate, real scorer, a 10-probe
 ladder from keygen through attestation, revocation, a declarant-SDK
 declaration (probe 6), a scorer outage, and a final recompute of the whole
-live feed by both verifier twins (probe 10) — lives with
-the reference application in the **testing monorepo**:
-[`treasury-intent-controller`](https://github.com/hossainpazooki/treasury-intent-controller)
-(`treasury/quickstart.ps1` / `.sh` → `RESULT: 10/10 probes passed`).
+live feed by both verifier twins (probe 10) — lives with the reference
+application in the maintainers' testing monorepo, which is **private**. Say
+plainly what that means for you: the live ladder is not something a reader of
+this repo can run today. What you can run here is the full test suite —
+including every byte-comparison and mutant pin — and the examiner's kit
+against its frozen fixture pair (`verifier/KIT.md`).
 
 ## Layout
 

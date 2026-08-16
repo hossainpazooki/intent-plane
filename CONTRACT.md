@@ -15,8 +15,8 @@ The plane is a domain-agnostic authorization layer: a declarant declares an
 intent, the gate decides deterministically whether it is authorized, and the
 decision is emitted exactly once to a durable append-only feed. The gate settles
 nothing itself (**emit-and-observe**); a downstream consumer settles from the
-feed. The demonstration deployment (`treasury/` in the testing monorepo
-`treasury-intent-controller`) exercises the plane from outside it — this repo
+feed. The demonstration deployment (a `treasury/` tree in the maintainers'
+private testing monorepo) exercises the plane from outside it — this repo
 is the SDK alone.
 
 ---
@@ -45,8 +45,8 @@ amendment's seating):** the core is a minimal SDK for agentic deployments and
 hosts NO human-authority seats. `core/` is the gate; `plane/` is the boundary
 artifact — envelope, payload, spec store, resolver, **verification only**:
 the core verifies what applications sign. The seats live in the APPLICATION
-built on the core — the reference application is the testing monorepo
-(`treasury-intent-controller`), whose `treasury/` tree seats them: the author
+built on the core — the reference application is the maintainers' private
+testing monorepo, whose `treasury/` tree seats them: the author
 chassis is `treasury/authoring`; the attester's seat — the only production
 importer of `treasury/authority`'s key operations — is `treasury/control`
 (attest, publish, revoke, promote); `treasury/authority` holds every
@@ -219,8 +219,8 @@ phase, defaults to `Pass`.
 > flag IS set, the bypass is total — it qualifies "unevaluable never passes",
 > "fail-closed twice", and "artifacts are the only crossings" in any
 > production claim, so the flag must never reach production. (The ROADMAP
-> recording this lives in the testing monorepo,
-> `treasury-intent-controller/docs/ROADMAP.md`.)
+> recording this lives in the maintainers' private testing monorepo, not
+> here.)
 
 ### §2.3 The durable feed record (JSONL)
 
@@ -427,8 +427,8 @@ five original fields are required):
   requests (`400`; FastAPI's `422` is acceptable as-is) and infrastructure
   failure — the client maps those to `Unevaluable` anyway, so both paths fail
   closed.
-- **Acknowledged debt (ADR-0003)**: `threshold` is `float64` on this wire while
-  ATLAS IntentSpecIR thresholds are exact `ScalarValue` (no floats) — a lossy
+- **Acknowledged debt**: `threshold` is `float64` on this wire while
+  artifact-plane IntentSpecIR thresholds are exact `ScalarValue` (no floats) — a lossy
   boundary, consciously deferred to the resolver-extraction slice (where the
   exact scalar actually crosses), not fixed here.
 
@@ -468,9 +468,9 @@ it is free text and would poison determinism.
 | `INTENT_UNSAFE_FORCE_SCORES` | gate | `1` ⟹ `force_scores` accepted (TEST POSTURE). Any other value ⟹ a request carrying `force_scores` is a loud 400. **Never set in production** |
 | `SCORER_HOST`, `SCORER_PORT` | scorer | uvicorn bind; defaults `127.0.0.1`, `8000` |
 | `SCORER_FACTS_JSON` | scorer | criterion → number JSON object. Unset ⟹ EMPTY fact map ⟹ every criterion `UNEVALUABLE` (§8) |
-| `SCORER_ARTIFACT_DIR`, `SCORER_ATLAS_INPUTS_DIR`, `SCORER_EXPORTED_AT_UNIX` | scorer | resolver config, all-or-nothing (§8) |
+| `SCORER_ARTIFACT_DIR`, `SCORER_VERIFY_INPUTS_DIR`, `SCORER_EXPORTED_AT_UNIX` | scorer | resolver config, all-or-nothing (§8) |
 | `SCORER_CONTRACT_DIR` | scorer tests | override for the §9 fixture directory |
-| `SCORER_ATLAS_DIR` | scorer tests | override for the wheel-lane ATLAS goldens |
+| `SCORER_GOLDENS_DIR` | scorer tests | override for the wheel-lane artifact goldens |
 
 **Scorer selection in `core/cmd/server`:** `force_scores` present AND the
 server booted with `INTENT_UNSAFE_FORCE_SCORES=1` ⟹ the per-request forced
@@ -898,7 +898,7 @@ closed anyway (pinned by `TestFailClosedOutOfDomainScore`, proven red-first).
 
 **Honesty bounds on invariant 7.** Step 1b closes the *vacuous* case only: a
 **thinned** set (three criteria where the source document requires five) is
-structurally invisible gate-side and belongs to the ATLAS-side
+structurally invisible gate-side and belongs to the artifact plane's
 minimum-criteria/coverage invariant. The volatility check closes the *typo* case
 only: a criterion semantically mislabeled stable is authoring/attestation
 territory the string cannot reveal. Every gate-side `unevaluable:empty-criteria`
@@ -1044,8 +1044,8 @@ ruling:** the CORE owns exactly one tree outside `core/` beside
 `core/cmd/server`: `plane` (envelope, payload, store, resolver —
 verification only), the boundary artifact the gate consumes. The authority
 seats live in the APPLICATION — no application tree ships in this repo; the
-reference instantiation is the testing monorepo
-(`treasury-intent-controller`): `treasury/authority` (every private-key
+reference instantiation is the maintainers' private testing
+monorepo: `treasury/authority` (every private-key
 operation; production-importable ONLY from `treasury/control`,
 `TestKeyPossessionBoundary`), `treasury/control`
 (attest/publish/revoke/promote), `treasury/authoring` (drafting chassis;
@@ -1340,7 +1340,7 @@ intent_spec_hash) -> bool`, run via `loop.run_in_executor` — `ke-artifact-py`'
 `verify()` holds the GIL through crypto and must not stall a concurrent
 `/ml/evaluate` (recorded GIL caveat).
 
-- `SCORER_ARTIFACT_DIR`, `SCORER_ATLAS_INPUTS_DIR`, `SCORER_EXPORTED_AT_UNIX`:
+- `SCORER_ARTIFACT_DIR`, `SCORER_VERIFY_INPUTS_DIR`, `SCORER_EXPORTED_AT_UNIX`:
   set **all three or none**. Partially set ⟹ refuse to boot. Set without the
   `ke-artifact-py` wheel ⟹ the lazy import crashes the boot loudly. **A server
   the operator configured to verify must never silently not-verify.**
@@ -1466,7 +1466,7 @@ substitutes for it.
 **Amendments folded in by the 2026-08-03 repositioning**, applied throughout
 above rather than annotated inline:
 
-- Module path `github.com/hossainpazooki/treasury-intent-controller` →
+- Module path renamed from the pre-repositioning monorepo path to
   `github.com/hossainpazooki/intent-plane`.
 - Go tree moved under `core/`: `cmd/server` → `core/cmd/server`, `internal/...`
   → `core/internal/...`, `contract/scorer` → `core/contract/scorer`.
@@ -1474,12 +1474,31 @@ above rather than annotated inline:
   `INTENT_DATA_DIR`/`INTENT_SCORER_URL`/`INTENT_ADDR`.
 - Python service `scorer/` → `core/scorer/`, package `tis` → `scorer`,
   distribution `treasury-intent-scorer` → `intent-scorer`, env `TIS_*` →
-  `SCORER_*`, test env `TIC_CONTRACT_DIR`/`TIC_ATLAS_DIR` →
-  `SCORER_CONTRACT_DIR`/`SCORER_ATLAS_DIR`.
+  `SCORER_*`, and the two test-env directory overrides re-prefixed to
+  `SCORER_CONTRACT_DIR` and the goldens override (renamed again on
+  2026-08-16, below).
 - Server binary `bin/tic.exe` → `bin/intent-gate.exe`.
 - Domain exemplars in core vocabulary neutralized (`sample-action`,
   `alpha`/`beta`/`gamma`, `per-actor`); the frozen wire fixtures keep theirs
   under the §9 exemption.
+
+**Amendment 2026-08-16 — resolver and goldens env vars de-named.** Two
+scorer environment variables carried a codename for a sibling system that
+has no meaning outside the maintainers' private estate, in a repository that
+is public. They are now named for what they hold:
+
+- resolver verify inputs → `SCORER_VERIFY_INPUTS_DIR` (§8 table above).
+- wheel-lane goldens override (tests only) → `SCORER_GOLDENS_DIR`.
+
+This is a **breaking config-surface change with no compatibility shim**, by
+explicit operator ruling. The retired spellings are not listed here — git
+history holds them, per the lineage note above. Operators must migrate:
+setting only a retired name leaves all three resolver variables unset, and
+§8's all-or-nothing rule then selects `NullResolver`, so a server that was
+verifying **silently stops verifying** rather than refusing to boot. That
+outcome is the known, accepted cost of taking the shim-free path; it is the
+one case in this document where the "never silently not-verify" rule is not
+mechanically enforced against a stale deployment.
 
 **Deliberately NOT carried forward** (build-phase scaffolding, spent once the
 build landed; recoverable from git history if ever needed): the three

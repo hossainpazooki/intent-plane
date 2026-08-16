@@ -7,7 +7,7 @@ import pytest
 
 from scorer.__main__ import facts_from_env, resolver_from_env
 
-RESOLVER_VARS = ("SCORER_ARTIFACT_DIR", "SCORER_ATLAS_INPUTS_DIR", "SCORER_EXPORTED_AT_UNIX")
+RESOLVER_VARS = ("SCORER_ARTIFACT_DIR", "SCORER_VERIFY_INPUTS_DIR", "SCORER_EXPORTED_AT_UNIX")
 
 
 def _clear(monkeypatch):

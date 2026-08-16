@@ -120,8 +120,7 @@ normative role vocabulary — declarant / author / attester / gate — is
 
 ## Known production-posture gaps, recorded rather than hidden
 
-(The ROADMAP lives in the testing monorepo, `treasury-intent-controller`,
-under `docs/ROADMAP.md`.) `force_scores` is guarded and witnessed but remains
+(The ROADMAP lives in the maintainers' private testing monorepo, not here.) `force_scores` is guarded and witnessed but remains
 a total scoring bypass wherever the boot flag is set; key authority is
 test-grade until ADR-0009; workload identity (R2) is asserted; the feed read
 surface is unauthenticated by design (network isolation is a deployment
@@ -145,7 +144,7 @@ contractcheck six (boundary, key-possession, neutrality, vocabulary presence,
 forbidden nouns, retired noun) run inside the named gate (see the root
 README's build section).
 
-**In the testing monorepo** (`github.com/hossainpazooki/treasury-intent-controller`):
+**In the maintainers' private testing monorepo** (not readable from here):
 the end-to-end probe ladder runs the whole plane — keygen, attest, publish,
 authorize against a signed spec, collide on idempotency, refuse an unattested
 hash, revoke and watch the reason surface, declare through the declarant SDK

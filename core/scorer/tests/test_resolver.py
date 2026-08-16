@@ -6,8 +6,8 @@ Two lanes, honestly separated:
   constructor. The stub stands in for ke_artifact_py's surface only; it proves
   the resolver's logic, never the crypto.
 - Wheel lane (Linux/CI only): the same resolver against the REAL wheel and the
-  REAL ATLAS golden artifacts + contract inputs. Skips visibly where the wheel
-  or the ATLAS checkout is absent — never faked green.
+  REAL rule-engine golden artifacts + contract inputs. Skips visibly where the wheel
+  or the rule-engine checkout is absent — never faked green.
 """
 
 import json
@@ -18,7 +18,7 @@ import pytest
 
 from scorer.resolver import ArtifactResolver, KeArtifactResolver, NullResolver
 
-# The pinned export instant the ATLAS contract test verifies at
+# The pinned export instant the rule-engine contract test verifies at
 # (regulatory-rule-engine scripts/contract-test.sh EXPORTED_AT).
 EXPORTED_AT = 1750000000
 
@@ -169,11 +169,11 @@ def test_requested_hash_is_case_insensitive(tmp_path):
     assert r.verify(None, H_A.upper()) is True
 
 
-# --- wheel lane: the real binding against the real ATLAS goldens ------------
+# --- wheel lane: the real binding against the real rule-engine goldens ------------
 
 
-def _atlas_dir() -> Path | None:
-    env = os.environ.get("SCORER_ATLAS_DIR")
+def _goldens_dir() -> Path | None:
+    env = os.environ.get("SCORER_GOLDENS_DIR")
     if env:
         return Path(env)
     sibling = Path(__file__).resolve().parents[3].parent / "regulatory-rule-engine"
@@ -181,34 +181,34 @@ def _atlas_dir() -> Path | None:
 
 
 def _wheel_lane():
-    """Common wheel-lane preamble: the real binding + the ATLAS checkout, or a
+    """Common wheel-lane preamble: the real binding + the rule-engine checkout, or a
     VISIBLE skip (a skipped wheel test is never a green one)."""
     binding = pytest.importorskip(
         "ke_artifact_py",
         reason="ke-artifact-py wheel absent (Linux/CI-only by design)",
     )
-    atlas = _atlas_dir()
-    if atlas is None:
+    goldens = _goldens_dir()
+    if goldens is None:
         pytest.skip(
-            "ATLAS checkout absent (set SCORER_ATLAS_DIR or check out "
+            "rule-engine checkout absent (set SCORER_GOLDENS_DIR or check out "
             "regulatory-rule-engine as a sibling)"
         )
-    return binding, atlas
+    return binding, goldens
 
 
-def _read_input(atlas: Path, name: str) -> str:
-    return (atlas / "scripts" / "contract-inputs" / name).read_text(encoding="utf-8")
+def _read_input(goldens: Path, name: str) -> str:
+    return (goldens / "scripts" / "contract-inputs" / name).read_text(encoding="utf-8")
 
 
-def _intentspec_env(atlas: Path) -> tuple[str, str]:
+def _intentspec_env(goldens: Path) -> tuple[str, str]:
     """The IntentSpec verification environment, synthesized the same way the
-    ATLAS side does: the kind-aware policy (intentspec_verification_policy —
+    rule-engine side does: the kind-aware policy (intentspec_verification_policy —
     SourceFidelity + PublicationApproval, NO ScenarioCoverage; ke-cli policy.rs,
     ADR-0021 §5) and a context whose current_legal_source_hash is THIS
     artifact's source_corpus_hash (R5; the exact procedure of
     emit-contract-inputs.rs). The shared contract-inputs policy/context are the
     RULE-artifact environment and reject an IntentSpec by construction."""
-    policy = json.loads(_read_input(atlas, "policy.json"))
+    policy = json.loads(_read_input(goldens, "policy.json"))
     policy["required_attestation_types"] = [
         t for t in policy["required_attestation_types"] if t != "ScenarioCoverage"
     ]
@@ -218,42 +218,42 @@ def _intentspec_env(atlas: Path) -> tuple[str, str]:
         if c["attestation_type"] != "ScenarioCoverage"
     ]
     manifest = json.loads(
-        (atlas / "fixtures" / "artifacts" / "intentspec_payment" / "manifest.json")
+        (goldens / "fixtures" / "artifacts" / "intentspec_payment" / "manifest.json")
         .read_text(encoding="utf-8")
     )
-    context = json.loads(_read_input(atlas, "context.json"))
+    context = json.loads(_read_input(goldens, "context.json"))
     context["current_legal_source_hash"] = manifest["source_corpus_hash"]
     return json.dumps(policy), json.dumps(context)
 
 
-def _atlas_resolver(binding, atlas: Path, **overrides) -> KeArtifactResolver:
-    policy_json, context_json = _intentspec_env(atlas)
+def _goldens_resolver(binding, goldens: Path, **overrides) -> KeArtifactResolver:
+    policy_json, context_json = _intentspec_env(goldens)
     kwargs = dict(
-        keydir_json=_read_input(atlas, "keydir.json"),
+        keydir_json=_read_input(goldens, "keydir.json"),
         context_json=context_json,
         policy_json=policy_json,
-        registry_json=_read_input(atlas, "registry.json"),
+        registry_json=_read_input(goldens, "registry.json"),
         exported_at_unix=EXPORTED_AT,
     )
     kwargs.update(overrides)
-    return KeArtifactResolver(atlas / "fixtures" / "artifacts", binding=binding, **kwargs)
+    return KeArtifactResolver(goldens / "fixtures" / "artifacts", binding=binding, **kwargs)
 
 
-def _golden_intentspec_hash(binding, atlas: Path) -> str:
-    kew = (atlas / "fixtures" / "artifacts" / "intentspec_payment" / "artifact.kew").read_bytes()
+def _golden_intentspec_hash(binding, goldens: Path) -> str:
+    kew = (goldens / "fixtures" / "artifacts" / "intentspec_payment" / "artifact.kew").read_bytes()
     return binding.from_bytes(kew).artifact_hash
 
 
 def test_wheel_lane_golden_intentspec_verifies():
-    binding, atlas = _wheel_lane()
-    r = _atlas_resolver(binding, atlas)
-    h = _golden_intentspec_hash(binding, atlas)
+    binding, goldens = _wheel_lane()
+    r = _goldens_resolver(binding, goldens)
+    h = _golden_intentspec_hash(binding, goldens)
     assert r.verify(None, h) is True
 
 
 def test_wheel_lane_unknown_hash_fails_closed():
-    binding, atlas = _wheel_lane()
-    r = _atlas_resolver(binding, atlas)
+    binding, goldens = _wheel_lane()
+    r = _goldens_resolver(binding, goldens)
     assert r.verify(None, "0" * 64) is False
 
 
@@ -263,11 +263,11 @@ def test_wheel_lane_unknown_registry_state_fails_closed():
     # differing ONLY in registry evidence downgraded to Unknown => the folded
     # verdict must reject (ADR-0019 fail-closed) and the resolver answer False.
     # (Differing only in this one input keeps the control non-vacuous.)
-    binding, atlas = _wheel_lane()
-    registry = json.loads(_read_input(atlas, "registry.json"))
+    binding, goldens = _wheel_lane()
+    registry = json.loads(_read_input(goldens, "registry.json"))
     registry["status"] = "Unknown"
-    r = _atlas_resolver(binding, atlas, registry_json=json.dumps(registry))
-    h = _golden_intentspec_hash(binding, atlas)
+    r = _goldens_resolver(binding, goldens, registry_json=json.dumps(registry))
+    h = _golden_intentspec_hash(binding, goldens)
     assert r.verify(None, h) is False
 
 
@@ -276,22 +276,22 @@ def test_wheel_lane_rule_environment_rejects_intentspec():
     # rule-artifact environment) the IntentSpec must fail closed — one static
     # environment verifies one kind. Mixed-kind requests in one deployment are
     # recorded debt (binding-side kind-aware policy), not a silent pass.
-    binding, atlas = _wheel_lane()
-    r = _atlas_resolver(
+    binding, goldens = _wheel_lane()
+    r = _goldens_resolver(
         binding,
-        atlas,
-        policy_json=_read_input(atlas, "policy.json"),
-        context_json=_read_input(atlas, "context.json"),
+        goldens,
+        policy_json=_read_input(goldens, "policy.json"),
+        context_json=_read_input(goldens, "context.json"),
     )
-    h = _golden_intentspec_hash(binding, atlas)
+    h = _golden_intentspec_hash(binding, goldens)
     assert r.verify(None, h) is False
 
 
 def test_wheel_lane_intent_spec_consumer_surface():
     # The ADR-0021 consumer surface this resolver's later extraction slice will
     # read: the golden IntentSpec payload projects criteria by name.
-    binding, atlas = _wheel_lane()
-    kew = (atlas / "fixtures" / "artifacts" / "intentspec_payment" / "artifact.kew").read_bytes()
+    binding, goldens = _wheel_lane()
+    kew = (goldens / "fixtures" / "artifacts" / "intentspec_payment" / "artifact.kew").read_bytes()
     art = binding.from_bytes(kew)
     criteria = art.iter_criteria()
     assert criteria, "golden IntentSpec artifact must declare criteria"
