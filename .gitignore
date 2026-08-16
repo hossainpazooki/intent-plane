@@ -2,6 +2,9 @@
 /bin/
 *.exe
 
+# release kits (assembled by scripts/release.sh)
+/dist/
+
 # scorer (Python service)
 core/scorer/.venv/
 __pycache__/
