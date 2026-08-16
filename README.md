@@ -6,8 +6,8 @@ the gate.**
 
 Before an agent moves money, files a report, or triggers a workflow, it must
 **declare the intent**. A deterministic gate authorizes it against a policy
-specification a human **signed** — or refuses. Every decision lands as
-exactly one durable record, built to be independently recomputed later.
+specification a human **signed** — or refuses. Every decision commits to a
+durable record, built to be independently recomputed later.
 
 ## Two sides, one record
 

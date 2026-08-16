@@ -62,8 +62,8 @@ term:
 
 - **plane** — *where does it sit?* The architectural position among peers: "the
   intent plane" (= gate + scorer + contracts, everything this repo ships),
-  beside the authoring plane, the artifact plane (ATLAS), and the settlement
-  plane (COMPASS). A "plane crossing" is a signed artifact moving between them.
+  beside the authoring plane, the artifact plane, and the settlement
+  plane. A "plane crossing" is a signed artifact moving between them.
   Never a code component — nothing inside the repo is "a plane."
 - **gate** — *what decides?* The deterministic enforcement component within the
   plane, and the fourth role above (role and component are deliberately the same

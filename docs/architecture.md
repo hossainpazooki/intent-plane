@@ -118,7 +118,7 @@ flowchart LR
         FEED --> API["core/cmd/server<br/>GET /v2/events?since=cursor"]
         FEED -.- NOTE["kill/restart over the same INTENT_DATA_DIR:<br/>records + reservations recover from disk,<br/>seq continues gapless at prevMax+1"]
     end
-    subgraph EXT["decision/execution plane — separate slice (COMPASS)"]
+    subgraph EXT["decision/execution plane — a separate deployment slice"]
         C["settlement consumer<br/>cron · pull/reconcile"] -->|recompute, never re-read| LED[("keyed settlement ledger<br/>at-most-once")]
     end
     API -.->|"polled by cursor — the consumer initiates;<br/>the gate never calls out"| C
@@ -185,8 +185,10 @@ at-most-once holds end to end.
    wallclock; replay drives **recompute** (not a re-read). The feed's global cursor
    (`seq`) never enters the per-intent trajectory hash.
 6. **Durability**: the event feed and the idempotency reservations survive process
-   restart over the same `INTENT_DATA_DIR` (kill/restart proven — byte-identical
-   events, same-key re-dispatch still refused).
+   restart over the same `INTENT_DATA_DIR` (kill/restart proven by
+   `TestRestartAtMostOnce`, `core/cmd/server/main_test.go`, and
+   `TestRecoveryAcrossReopen`, `core/internal/durable/store_test.go` —
+   byte-identical events, same-key re-dispatch still refused).
 7. **Thin-spec defense** (step 1b): zero criteria ⟹ `FAILED`
    `unevaluable:empty-criteria`; unknown volatility ⟹ `FAILED`
    `unevaluable:invalid-volatility:<name>`. Both refuse **before any scoring** —
