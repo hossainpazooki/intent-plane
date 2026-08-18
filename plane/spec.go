@@ -7,8 +7,8 @@ import (
 
 // Posture is the enforcement posture carried INSIDE the signed payload.
 // Promotion from shadow to enforce is a NEW attestation with a NEW hash — an
-// authority act, never a config toggle (ADR-0006, Proposed; ROADMAP R3's only
-// permitted shadow shape).
+// authority act, never a config toggle (governance decision Proposed, not
+// ratified; ROADMAP R3's only permitted shadow shape).
 type Posture string
 
 const (

@@ -18,8 +18,8 @@ import pytest
 
 from scorer.resolver import ArtifactResolver, KeArtifactResolver, NullResolver
 
-# The pinned export instant the rule-engine contract test verifies at
-# (regulatory-rule-engine scripts/contract-test.sh EXPORTED_AT).
+# The pinned export instant the upstream rule-engine's contract test
+# verifies at.
 EXPORTED_AT = 1750000000
 
 
@@ -173,11 +173,11 @@ def test_requested_hash_is_case_insensitive(tmp_path):
 
 
 def _goldens_dir() -> Path | None:
+    # SCORER_GOLDENS_DIR is the lane's ONLY wiring (CONTRACT.md §8 env table):
+    # explicit configuration, no filesystem-layout guessing. Unset => the lane
+    # skips visibly below.
     env = os.environ.get("SCORER_GOLDENS_DIR")
-    if env:
-        return Path(env)
-    sibling = Path(__file__).resolve().parents[3].parent / "regulatory-rule-engine"
-    return sibling if sibling.is_dir() else None
+    return Path(env) if env else None
 
 
 def _wheel_lane():
@@ -190,8 +190,8 @@ def _wheel_lane():
     goldens = _goldens_dir()
     if goldens is None:
         pytest.skip(
-            "rule-engine checkout absent (set SCORER_GOLDENS_DIR or check out "
-            "regulatory-rule-engine as a sibling)"
+            "rule-engine goldens absent (set SCORER_GOLDENS_DIR to a goldens "
+            "checkout)"
         )
     return binding, goldens
 
@@ -202,12 +202,12 @@ def _read_input(goldens: Path, name: str) -> str:
 
 def _intentspec_env(goldens: Path) -> tuple[str, str]:
     """The IntentSpec verification environment, synthesized the same way the
-    rule-engine side does: the kind-aware policy (intentspec_verification_policy —
-    SourceFidelity + PublicationApproval, NO ScenarioCoverage; ke-cli policy.rs,
-    ADR-0021 §5) and a context whose current_legal_source_hash is THIS
-    artifact's source_corpus_hash (R5; the exact procedure of
-    emit-contract-inputs.rs). The shared contract-inputs policy/context are the
-    RULE-artifact environment and reject an IntentSpec by construction."""
+    rule-engine side does: the upstream kind-aware IntentSpec policy
+    (SourceFidelity + PublicationApproval, NO ScenarioCoverage) and a context
+    whose current_legal_source_hash is THIS artifact's source_corpus_hash
+    (the exact procedure of the upstream contract-input emitter). The shared
+    contract-inputs policy/context are the RULE-artifact environment and
+    reject an IntentSpec by construction."""
     policy = json.loads(_read_input(goldens, "policy.json"))
     policy["required_attestation_types"] = [
         t for t in policy["required_attestation_types"] if t != "ScenarioCoverage"
@@ -261,7 +261,8 @@ def test_wheel_lane_unknown_registry_state_fails_closed():
     # Negative control proving the resolver consults VERIFICATION, not mere
     # file presence: the EXACT environment the happy-path test verifies under,
     # differing ONLY in registry evidence downgraded to Unknown => the folded
-    # verdict must reject (ADR-0019 fail-closed) and the resolver answer False.
+    # verdict must reject (upstream fail-closed verdict folding) and the
+    # resolver answer False.
     # (Differing only in this one input keeps the control non-vacuous.)
     binding, goldens = _wheel_lane()
     registry = json.loads(_read_input(goldens, "registry.json"))
@@ -288,8 +289,8 @@ def test_wheel_lane_rule_environment_rejects_intentspec():
 
 
 def test_wheel_lane_intent_spec_consumer_surface():
-    # The ADR-0021 consumer surface this resolver's later extraction slice will
-    # read: the golden IntentSpec payload projects criteria by name.
+    # The upstream consumer surface this resolver's later extraction slice
+    # will read: the golden IntentSpec payload projects criteria by name.
     binding, goldens = _wheel_lane()
     kew = (goldens / "fixtures" / "artifacts" / "intentspec_payment" / "artifact.kew").read_bytes()
     art = binding.from_bytes(kew)

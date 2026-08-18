@@ -10,8 +10,8 @@
 // side. "Holds no keys" is a code-graph fact in-repo; the deployment-graph
 // half of that claim remains ROADMAP R2, asserted.
 //
-// Key authority is TEST-GRADE (ADR-0009 production key authority is not
-// landed): every envelope carries key_authority so provenance keeps saying so.
+// Key authority is TEST-GRADE (production key authority is not landed):
+// every envelope carries key_authority so provenance keeps saying so.
 package plane
 
 import (
@@ -33,7 +33,7 @@ const RevocationPayloadType = "application/vnd.intent-plane.revocation+json"
 
 // KeyAuthorityTest marks envelopes signed under the in-repo test key
 // authority. It is stamped into every signature block and MUST NOT be dropped
-// until ADR-0009 production key authority lands (ROADMAP R1).
+// until production key authority lands (ROADMAP R1).
 const KeyAuthorityTest = "test"
 
 // Signature is one signature block of an envelope.

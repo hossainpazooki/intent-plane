@@ -111,7 +111,7 @@ func TestAttestVerifyRoundTrip(t *testing.T) {
 		t.Fatalf("keyid %s != %s", keyid, kf.KeyID)
 	}
 	if env.Signatures[0].KeyAuthority != plane.KeyAuthorityTest {
-		t.Fatal("envelope must carry the test key-authority stamp until ADR-0009 lands")
+		t.Fatal("envelope must carry the test key-authority stamp until production key authority lands")
 	}
 }
 

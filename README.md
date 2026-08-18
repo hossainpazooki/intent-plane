@@ -210,7 +210,7 @@ demonstration stay in the monorepo.
 feed, refusal-hash commitment, the verifier twins, and the declarant SDK
 (Go; §2.7 discipline as code, proven live against the reference plane in the
 monorepo's quickstart probe 6) are built and test-pinned; key authority is
-test-grade until ADR-0009 (every signature says so); workload identity and
+test-grade until production key authority lands (every signature says so); workload identity and
 record signing are staged, not built — so the verifier proves the record
 self-consistent, not never-rewritten. A Python declarant twin is recorded
 future work. The full claim-by-claim standing — nothing here asks to be

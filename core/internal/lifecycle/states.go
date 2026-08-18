@@ -14,7 +14,7 @@ const (
 	Failed           State = "FAILED"
 	FailedAtDispatch State = "FAILED_AT_DISPATCH"
 	// ShadowRecorded is the terminal of a shadow-posture intent: fully scored,
-	// durably recorded, and NOT authorized (ADR-0006, Proposed).
+	// durably recorded, and NOT authorized (governance decision Proposed, not ratified).
 	ShadowRecorded State = "SHADOW_RECORDED"
 )
 

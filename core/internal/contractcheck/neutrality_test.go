@@ -50,7 +50,10 @@ func TestCoreNeutrality(t *testing.T) {
 		}
 		rel, _ := filepath.Rel(root, path)
 		relSlash := filepath.ToSlash(rel)
-		if neutralityExemptFiles[relSlash] || d.Name() == "neutrality_test.go" {
+		// A gate's own pattern literal is not an occurrence: this file carries
+		// the treasury-noun regex, and internal_refs_test.go carries the
+		// banned-internal-reference literals (one of which embeds "treasury").
+		if neutralityExemptFiles[relSlash] || d.Name() == "neutrality_test.go" || d.Name() == "internal_refs_test.go" {
 			return nil
 		}
 		b, err := os.ReadFile(path)

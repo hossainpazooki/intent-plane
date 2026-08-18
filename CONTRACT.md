@@ -112,7 +112,7 @@ except `core/cmd/server` lives under `core/internal/`.
 | Route | Purpose |
 |---|---|
 | `POST /v2/intents` | declaration in; verdict record out (`terminal`, `reason`, `trajectory_hash`, `achieved_seq`) |
-| `GET /v2/events?since=&type=` | the completion feed, cursor read — a **by-design gate-free read** (emit-and-observe); note it is unauthenticated (deployment posture, see `docs/ROADMAP.md` findings) |
+| `GET /v2/events?since=&type=` | the completion feed, cursor read — a **by-design gate-free read** (emit-and-observe); note it is unauthenticated (deployment posture — a recorded finding on the maintainers' private roadmap) |
 | `GET /v2/intents/{id}/events` | per-intent records, ascending `intent_seq` |
 | `GET /healthz` | `200 "ok"` (`text/plain`) |
 
@@ -470,7 +470,7 @@ it is free text and would poison determinism.
 | `SCORER_FACTS_JSON` | scorer | criterion → number JSON object. Unset ⟹ EMPTY fact map ⟹ every criterion `UNEVALUABLE` (§8) |
 | `SCORER_ARTIFACT_DIR`, `SCORER_VERIFY_INPUTS_DIR`, `SCORER_EXPORTED_AT_UNIX` | scorer | resolver config, all-or-nothing (§8) |
 | `SCORER_CONTRACT_DIR` | scorer tests | override for the §9 fixture directory |
-| `SCORER_GOLDENS_DIR` | scorer tests | override for the wheel-lane artifact goldens |
+| `SCORER_GOLDENS_DIR` | scorer tests | the wheel-lane artifact goldens checkout — the lane's ONLY wiring; unset ⟹ the lane skips VISIBLY |
 
 **Scorer selection in `core/cmd/server`:** `force_scores` present AND the
 server booted with `INTENT_UNSAFE_FORCE_SCORES=1` ⟹ the per-request forced
@@ -501,7 +501,7 @@ monorepo; `TestKeyPossessionBoundary` governs any in-tree instantiation).
 `PAE(payloadType, payload)` (DSSE v1 pre-authentication encoding), ed25519.
 `payloadType` is `application/vnd.intent-plane.spec+json` for specs and
 `application/vnd.intent-plane.revocation+json` for tombstones. `keyid` =
-first 16 hex of sha256(pubkey). **`key_authority` is `"test"` until ADR-0009
+first 16 hex of sha256(pubkey). **`key_authority` is `"test"` until
 production key authority lands (R1)** — every envelope says so.
 
 **Content address.** `intent_spec_hash` = lowercase-hex sha256 over the RAW
@@ -607,7 +607,7 @@ const (
 	Achieved         State = "ACHIEVED"
 	Failed           State = "FAILED"
 	FailedAtDispatch State = "FAILED_AT_DISPATCH"
-	ShadowRecorded   State = "SHADOW_RECORDED" // ADR-0006 (Proposed): 2026-08-04 canon bump
+	ShadowRecorded   State = "SHADOW_RECORDED" // governance decision Proposed, not ratified (2026-08-04 canon bump)
 )
 
 // IsTerminal reports whether s is one of ACHIEVED, FAILED, FAILED_AT_DISPATCH,
@@ -636,7 +636,8 @@ map-iteration order never reaches the event log.
 **`FAILED_AT_DISPATCH` ⟹ no settlement event, every time** — no `ACHIEVED`
 record exists in the feed, so no consumer ever settles.
 
-**`SHADOW_RECORDED`** (ADR-0006, Proposed) is the terminal of a
+**`SHADOW_RECORDED`** (its recording governance decision is Proposed, not
+ratified) is the terminal of a
 shadow-posture intent: fully scored — declaration AND dispatch-edge recheck —
 then durably recorded with the four trace fields, and **NOT authorized**: no
 `ACHIEVED` event, no idempotency-key reservation, no consumer ever settles.
@@ -1399,8 +1400,8 @@ files that reproduce those bytes:
 `core/scorer/tests/test_fixtures.py`. The exemption is byte-pinned and
 fixture-coupled, not a judgment call — it is stated explicitly in
 `neutrality_test.go`. Regenerating the fixtures with neutral exemplar names
-(both lanes re-greening in the same change) is a recorded `docs/ROADMAP.md`
-follow-up.
+(both lanes re-greening in the same change) is a recorded follow-up on the
+maintainers' private roadmap.
 
 ### §9.1 Feed fixtures and the verifier twins (2026-08-08)
 
@@ -1488,7 +1489,7 @@ has no meaning outside the maintainers' private estate, in a repository that
 is public. They are now named for what they hold:
 
 - resolver verify inputs → `SCORER_VERIFY_INPUTS_DIR` (§8 table above).
-- wheel-lane goldens override (tests only) → `SCORER_GOLDENS_DIR`.
+- wheel-lane goldens (tests only) → `SCORER_GOLDENS_DIR`.
 
 This is a **breaking config-surface change with no compatibility shim**, by
 explicit operator ruling. The retired spellings are not listed here — git
@@ -1499,6 +1500,32 @@ verifying **silently stops verifying** rather than refusing to boot. That
 outcome is the known, accepted cost of taking the shim-free path; it is the
 one case in this document where the "never silently not-verify" rule is not
 mechanically enforced against a stale deployment.
+
+**Amendment 2026-08-18 — internal references de-numbered; goldens wiring
+made explicit.** By operator ruling, two reference classes that resolved
+only inside the maintainers' private estate were removed from this public
+repository:
+
+- **Private decision-record numbers de-numbered.** References of the form
+  `ADR-NNNN` pointed at decision records a public reader cannot follow. Each
+  reference now carries the decision's substance and status in place
+  (e.g. "governance decision Proposed, not ratified"; "until production key
+  authority lands (R1)"). No decision's status changed — only the pointer
+  form. The R1–R4 stage labels remain: they are defined publicly in
+  `docs/assurance.md`'s stage table.
+- **Third-party project internals re-architected away.** The scorer's
+  wheel-lane tests knew a sibling project's repository name and directory
+  layout (a filesystem fallback beside this checkout). The lane's wiring is
+  now `SCORER_GOLDENS_DIR` ONLY — explicit configuration, no layout
+  knowledge; unset means a visible skip, never a guess. Upstream documents
+  are described by role ("the upstream kind-aware policy"), not by name or
+  number.
+
+Both classes — plus the 2026-08-16 scrub's codenames — are now **pinned at
+zero mechanically** by `TestInternalReferencesAbsent`
+(`core/internal/contractcheck/internal_refs_test.go`), so a future port from
+the private estate that re-introduces one fails the gate instead of
+shipping.
 
 **Deliberately NOT carried forward** (build-phase scaffolding, spent once the
 build landed; recoverable from git history if ever needed): the three

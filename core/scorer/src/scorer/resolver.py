@@ -85,8 +85,7 @@ class KeArtifactResolver:
     ) -> "KeArtifactResolver":
         """Construct from an inputs directory holding the four rule-engine verify
         inputs by their contract-test names: keydir.json, context.json,
-        policy.json, registry.json (see regulatory-rule-engine
-        scripts/contract-inputs/)."""
+        policy.json, registry.json (the upstream contract-inputs layout)."""
         inputs = Path(inputs_dir)
 
         def read(name: str) -> str:

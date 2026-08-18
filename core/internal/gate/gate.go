@@ -393,7 +393,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 	// dispatch-edge recheck) and would have authorized — record exactly that,
 	// durably, and authorize NOTHING: no key reservation, no ACHIEVED, the
 	// consequence never fires. Promotion to enforce is a NEW attestation with
-	// a NEW hash (ADR-0006, Proposed): enforcement posture is an authority
+	// a NEW hash (governance decision Proposed, not ratified): enforcement posture is an authority
 	// decision, not a config toggle.
 	if i.Spec.Posture == intent.PostureShadow {
 		if !lifecycle.IsValidTransition(state, lifecycle.ShadowRecorded) {

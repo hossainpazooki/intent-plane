@@ -68,7 +68,7 @@ flowchart TD
     V -->|criterion failed / unevaluable| F
     V -->|all criteria pass| VR{volatile re-check ·<br/>revocation re-check}
     VR -->|fact drifted / spec pulled| FD[FAILED_AT_DISPATCH]
-    VR -->|holds — shadow posture| SH["SHADOW_RECORDED — durable record,<br/>fully scored, NOT authorized (ADR-0006)"]
+    VR -->|holds — shadow posture| SH["SHADOW_RECORDED — durable record,<br/>fully scored, NOT authorized"]
     VR -->|holds — enforce posture| IDEM{{"reserve idempotency key<br/>declared · first-class criterion"}}
     IDEM -->|collision — duplicate action| FD
     IDEM -->|fresh key| ACH["ACHIEVED — one durable record<br/>consumers settle from it"]
@@ -99,7 +99,7 @@ field, hence a *different* intent hash — collides on the key and is refused
 (`FAILED_AT_DISPATCH`). At-most-once holds on the settlement log by
 construction, not by assertion. The key's governance as a signed,
 expert-attested criterion lives in the attested spec payload
-(`CONTRACT.md` §2.6, per ADR-0007) — the gate consumes and enforces it.
+(`CONTRACT.md` §2.6) — the gate consumes and enforces it.
 
 Both `FAILED` and `FAILED_AT_DISPATCH` guarantee **no `ACHIEVED` record
 exists** in the durable feed — so no consumer ever settles. The audit reading
@@ -154,7 +154,7 @@ at-most-once holds end to end.
   source pins (sha256 of the exact policy passage behind each value), named
   unknowns, and human-judgment entries. Unknown fields refuse. (Thresholds
   are float64 today; the payload schema moves to exact decimal strings
-  before R1 — a binding trigger recorded in ADR-0007, because migrating
+  before R1 — a recorded binding trigger, because migrating
   content-addressed signed bytes later means re-attesting everything.)
 - **Resolution (hybrid rule).** The store is authoritative: a published,
   pinned envelope resolves; a wire-supplied envelope resolves only if it
