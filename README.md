@@ -152,7 +152,7 @@ go test ./core/internal/contractcheck -count=1 -v          # the contract pins (
 go test ./verifier -count=1 -v                             # the Go verifier over the frozen feed fixtures
 core/scorer/.venv/Scripts/python -m pytest verifier/pyverifier   # the Python twin, same bytes
 go test ./declarant -count=1 -v                            # the declarant: golden bytes, classification, 500 edge
-core/scorer/.venv/Scripts/python -m pytest declarant/pydeclarant  # the declarant's Python twin, same golden bytes
+core/scorer/.venv/Scripts/python -m pytest declarant/pydeclarant  # the declarant's Python twin + LangChain adapter (adapter tests skip without langchain-core)
 ```
 
 Or take the demand side's seat directly — hand the CLI a feed and let it

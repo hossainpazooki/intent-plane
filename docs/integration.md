@@ -63,6 +63,52 @@ posture only and is refused unless the server booted with
 doc. Zero-config is fail-closed: a gate booted with no trust root and no
 scorer URL authorizes nothing.
 
+## LangChain: gate a tool in one call
+
+For LangChain runtimes the embedding discipline ships pre-wired
+(`declarant/pydeclarant/langchain_adapter.py`, optional — it is the one
+pydeclarant module that imports `langchain_core`; everything else in the
+tree is stdlib-only):
+
+```python
+from client import Client
+from langchain_adapter import gate_tool, IntentRefused
+
+gated = gate_tool(
+    my_tool,                       # any LangChain tool
+    Client("http://127.0.0.1:8080", timeout=30.0),
+    intent_spec_hash=SPEC_HASH,    # content address of the attested spec
+    scope="per-actor",
+    run_id=agent_run_id,
+)
+```
+
+The gated tool executes ONLY on `Proceed`. Every other outcome raises
+`IntentRefused`, which carries the §2.7 classification (`class_`,
+`terminal`, `reason`), the machine-readable `same_key_retry_safe`
+position, and prose `retry_guidance` — the wrapped tool function is never
+called, so the worst case is an action that wrongly waits. What the
+adapter takes off your hands:
+
+- **Canonicalization** (§2.7's caller duty): schema-validated keyword args
+  are canonicalized by a fixed recipe (pydantic models via
+  `model_dump(mode="json")`, then sorted-key compact JSON), so
+  omit-vs-explicit defaults and dict-vs-model inputs derive the SAME
+  idempotency key. String/positional input is refused before any
+  declaration — it would fork the key.
+- **Per-call intent scoping**: each invocation declares under its own
+  intent (episode seed derived from the idempotency key), so the 500-edge
+  feed consult reads the calling intent's records, never another call's.
+  And a `Proceed` read back from that consult is HISTORICAL — the
+  consequence already fired once — so the adapter refuses
+  (`ALREADY_ACHIEVED`) instead of re-firing it; execution requires a fresh
+  synchronous `Proceed`.
+- **Async**: `ainvoke` delegates to the gated sync path — the async route
+  is gated by construction, not separately wired.
+
+Give the `Client` a real timeout here: the default `None` mirrors the Go
+reference and will wait on a hung gate indefinitely.
+
 ## Forwarding the record to observability — logs index, gates decide
 
 The durable feed is a line-delimited JSON file

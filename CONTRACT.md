@@ -589,14 +589,40 @@ is caller guidance layered on top of it.
   never off the synchronous response alone.
 
 **The discipline ships as code twice (Python twin added 2026-08-18):**
-`declarant/` (Go, the reference) and `declarant/pydeclarant/` (stdlib-only
-Python twin, mirroring the `verifier/pyverifier/` precedent). Both are held
+`declarant/` (Go, the reference) and `declarant/pydeclarant/` (Python twin,
+mirroring the `verifier/pyverifier/` precedent; its core modules
+`declare.py` and `client.py` are stdlib-only — the ONE exception in the
+tree is the optional framework adapter below, which imports
+`langchain_core`). Both are held
 to the same frozen golden request bytes
 (`declarant/testdata/request-golden.json`), the same total classification
 table with the same fail-closed `Unknown`, and the same 500-edge call order
 (feed consult BEFORE deciding; unreachable feed ⟹ `Indeterminate`). The
 twin's lane: `python -m pytest declarant/pydeclarant`. Like the verifier's
 twin, it imports nothing from this module outside its own tree (§7.1).
+
+**Framework adapter (`langchain_adapter.py`, 2026-08-18).** `gate_tool`
+wraps any LangChain tool so invocation becomes declare → await terminal →
+proceed-or-refuse: the wrapped tool executes ONLY on `Proceed`; every
+other class — `ShadowRecorded` (recorded, NOT authorized),
+`Indeterminate`, the fail-closed `Unknown` included — raises a structured
+refusal carrying the class and the same-key-retry position, and the tool
+function is never called. Each invocation declares under its OWN intent:
+the episode seed is derived per-call from the derived idempotency key, so
+the 500-edge consult reads the calling intent's records and can never
+authorize one call with another call's terminal (a same-key retry
+correctly consults its own intent). The adapter discharges the caller's
+canonicalization duty for this framework with a fixed recipe: pydantic
+model values are converted recursively via `model_dump(mode="json")`, then
+the schema-validated keyword args are serialized as sorted-key compact
+JSON. Non-keyword (string) input is refused BEFORE any declaration rather
+than being given a second key. A `Proceed` read back from the 500-edge
+feed consult is a HISTORICAL `ACHIEVED`, not a fresh synchronous
+authorization: the consequence already fired once, so the adapter refuses
+to re-fire it (adapter-level refusal `ALREADY_ACHIEVED` — recover the
+outcome from the feed, never re-execute). Execution requires a synchronous
+`Proceed`, nothing less. The adapter is optional: hosts without
+`langchain_core` skip its tests visibly and lose nothing else.
 
 ---
 
@@ -1008,6 +1034,7 @@ non-vacuous by mutating a COPY of the tree and watching it go red.
 | 13 | Refusal-hash commitment: the terminal-position record of EVERY completed authorization carries `trajectory_hash`, it recomputes from the per-intent records, and no non-terminal record carries one. | `go test ./core/internal/gate -run TerminalHash` — drive one intent per terminal class (ACHIEVED, SHADOW_RECORDED, criteria-FAILED, volatile-recheck, idempotency-collision, and a step-1 refusal) and assert the hash placement + recompute. Mutant: stamp the hash one event early. |
 | 14 | Verifier twins agree and are non-vacuous: Go and Python produce byte-identical reports on the frozen feed fixtures, `VERIFIED` on the good fixture, `REFUTED` on the tampered one. | §9 feed-fixture tests green in BOTH lanes against the SAME bytes, plus quickstart probe 10 in the testing monorepo (both twins over the live feed, byte-compared). Mutant: the tampered fixture IS the standing mutant — one flipped detail byte must refute. |
 | 15 | Declarant discipline (§2.7): the SDK marshals exactly the declarant-owned §2.2 fields (golden request bytes), `force_scores` exists in no declarant type, terminal classification is total with a fail-closed `Unknown`, and the 500 edge consults the per-intent feed before deciding. | `go test ./declarant -count=1` — golden-bytes marshal test; classification table test covering every §3.2/§3.3 cause class AND an out-of-vocabulary reason; an `httptest` 500-edge test proving the feed consult precedes the decision. Mutant: drop the `Unknown` fallback (default to retry) → classification test red. Python twin (2026-08-18): `python -m pytest declarant/pydeclarant` — the SAME golden bytes byte-compared, the same classification totality incl. out-of-vocabulary, and an in-process-HTTP 500-edge call-order proof. Live: quickstart probe 6 in the testing monorepo (declare through the SDK ⟹ `PROCEED`; re-declare same key ⟹ `ALREADY_RESERVED`). |
+| 16 | Framework adapter fail-closed (§2.7): a wrapped LangChain tool executes ONLY on `Proceed`; every other outcome — out-of-vocabulary `Unknown` included — raises a structured refusal with the wrapped tool's call count unchanged, and every invocation declares under its own per-call intent (episode seed derived from the idempotency key), so the 500-edge consult never authorizes one call with another call's terminal. | `python -m pytest declarant/pydeclarant` (the adapter tests skip VISIBLY where `langchain_core` is absent) — call-counting refusal matrix incl. an out-of-vocabulary terminal; a consult-URL pin asserting the 500-edge GET carries the calling invocation's OWN intent id; string input refused with no declaration POST observed; a same-key retry whose declare 500s while its OWN feed shows committed `ACHIEVED` is refused (`ALREADY_ACHIEVED`), never re-executed — execution requires a synchronous `Proceed`. Mutant: make the adapter execute on `Indeterminate` → the call-count test goes red. |
 
 ---
 
