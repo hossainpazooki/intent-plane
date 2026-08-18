@@ -76,7 +76,7 @@ from langchain_adapter import gate_tool, IntentRefused
 
 gated = gate_tool(
     my_tool,                       # any LangChain tool
-    Client("http://127.0.0.1:8080", timeout=30.0),
+    Client("http://127.0.0.1:8080"),   # bounded by default (30s per call)
     intent_spec_hash=SPEC_HASH,    # content address of the attested spec
     scope="per-actor",
     run_id=agent_run_id,
@@ -106,8 +106,9 @@ adapter takes off your hands:
 - **Async**: `ainvoke` delegates to the gated sync path — the async route
   is gated by construction, not separately wired.
 
-Give the `Client` a real timeout here: the default `None` mirrors the Go
-reference and will wait on a hung gate indefinitely.
+Both SDK clients are bounded by default (30s per call); an unbounded
+client is an explicit opt-in (Go: supply your own `http.Client`; Python:
+`timeout=None`), never something you inherit by forgetting a parameter.
 
 ## Forwarding the record to observability — logs index, gates decide
 

@@ -36,14 +36,21 @@ class Result:
     feed_records: list = field(default_factory=list)
 
 
+# DEFAULT_TIMEOUT bounds one declarant HTTP call (section 2.7 client-timeout
+# rule, mirrored by Go's DefaultTimeout): a hung gate hangs the one call,
+# never the declarant forever. An unbounded client is an explicit caller
+# opt-in (timeout=None), never the default.
+DEFAULT_TIMEOUT = 30.0
+
+
 class Client:
     """Mirror of Go client.Client. declare() drops the Go ctx param - Python
     has no context.Context; the honest equivalent is the per-call timeout on
     the Client (see __init__)."""
 
-    def __init__(self, base_url: str, timeout: float | None = None):
+    def __init__(self, base_url: str, timeout: float | None = DEFAULT_TIMEOUT):
         self.base_url = base_url        # gate origin, e.g. "http://127.0.0.1:8080"; no trailing slash
-        self.timeout = timeout          # Go uses http.DefaultClient => NO timeout by default; mirror with None.
+        self.timeout = timeout          # bounded by default; None = unbounded, explicit opt-in only
 
     def declare(self, r: Request) -> Result:
         """Mirror Go Client.Declare. No ctx param - Python has no

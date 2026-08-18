@@ -16,7 +16,7 @@ import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from client import Client
+from client import DEFAULT_TIMEOUT, Client
 from client import terminal_position  # noqa: F401  (imported per contract; exercised directly below)
 from declare import INDETERMINATE, PROCEED, SDK_BUG, golden_request, intent_id
 
@@ -214,3 +214,10 @@ def test_terminal_position():
     rec, ok = terminal_position(committed)
     assert ok is True
     assert rec == committed[1]
+
+
+def test_default_client_is_bounded():
+    # Section 2.7 client-timeout rule (mirrors Go TestDefaultClientIsBounded):
+    # the default client is bounded; unbounded is an explicit opt-in.
+    assert Client("http://127.0.0.1:1").timeout == DEFAULT_TIMEOUT == 30.0
+    assert Client("http://127.0.0.1:1", timeout=None).timeout is None

@@ -587,6 +587,12 @@ is caller guidance layered on top of it.
 - **Settlement.** Side effects key off observed ACHIEVED records from the
   cursor feed (`?since=<durable cursor>`, §5.3 `feedConsumer` discipline),
   never off the synchronous response alone.
+- **Client timeout (operator ruling 2026-08-18).** Both SDK clients default
+  to a BOUNDED per-call timeout of 30 seconds (`DefaultTimeout` /
+  `DEFAULT_TIMEOUT`); a hung gate must hang the caller's one call, never
+  the declarant forever. An unbounded client is an explicit caller opt-in
+  (Go: supply your own `http.Client`; Python: pass `timeout=None`), never
+  the default.
 
 **The discipline ships as code twice (Python twin added 2026-08-18):**
 `declarant/` (Go, the reference) and `declarant/pydeclarant/` (Python twin,
