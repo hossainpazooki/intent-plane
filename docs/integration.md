@@ -10,7 +10,8 @@ classification with fail-closed `Unknown`, the 500-edge feed consult, and the
 cursor poll — plus the `intent-declare` CLI. `force_scores` exists in no
 declarant type. This page remains the normative walkthrough; the package is
 its executable form, proven live against the reference plane (the monorepo's
-quickstart probes 6 and 7 — the Go SDK and the Python twin respectively).
+quickstart probes 6–8 — the Go SDK, the Python twin, and the LangChain
+adapter respectively).
 
 ## The shape of the integration
 
@@ -97,7 +98,8 @@ adapter takes off your hands:
   idempotency key. String/positional input is refused before any
   declaration — it would fork the key.
 - **Per-call intent scoping**: each invocation declares under its own
-  intent (episode seed derived from the idempotency key), so the 500-edge
+  FRESH intent (episode seed = the idempotency key plus a per-invocation
+  nonce — same-key retries never reuse an intent id), so the 500-edge
   feed consult reads the calling intent's records, never another call's.
   And a `Proceed` read back from that consult is HISTORICAL — the
   consequence already fired once — so the adapter refuses
