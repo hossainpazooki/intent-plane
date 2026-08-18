@@ -588,6 +588,16 @@ is caller guidance layered on top of it.
   cursor feed (`?since=<durable cursor>`, §5.3 `feedConsumer` discipline),
   never off the synchronous response alone.
 
+**The discipline ships as code twice (Python twin added 2026-08-18):**
+`declarant/` (Go, the reference) and `declarant/pydeclarant/` (stdlib-only
+Python twin, mirroring the `verifier/pyverifier/` precedent). Both are held
+to the same frozen golden request bytes
+(`declarant/testdata/request-golden.json`), the same total classification
+table with the same fail-closed `Unknown`, and the same 500-edge call order
+(feed consult BEFORE deciding; unreachable feed ⟹ `Indeterminate`). The
+twin's lane: `python -m pytest declarant/pydeclarant`. Like the verifier's
+twin, it imports nothing from this module outside its own tree (§7.1).
+
 ---
 
 ## §3 Lifecycle & cause classes
@@ -997,7 +1007,7 @@ non-vacuous by mutating a COPY of the tree and watching it go red.
 | 12 | Live outage refuses, never grants. | Two-process probe: gate `ACHIEVED` with the service up and facts passing; kill the service; the same intent (fresh key) ⟹ `FAILED`, `unevaluable:<criterion>`, no ACHIEVED record in the feed. The kill is real (`taskkill` / `kill`), not mocked. |
 | 13 | Refusal-hash commitment: the terminal-position record of EVERY completed authorization carries `trajectory_hash`, it recomputes from the per-intent records, and no non-terminal record carries one. | `go test ./core/internal/gate -run TerminalHash` — drive one intent per terminal class (ACHIEVED, SHADOW_RECORDED, criteria-FAILED, volatile-recheck, idempotency-collision, and a step-1 refusal) and assert the hash placement + recompute. Mutant: stamp the hash one event early. |
 | 14 | Verifier twins agree and are non-vacuous: Go and Python produce byte-identical reports on the frozen feed fixtures, `VERIFIED` on the good fixture, `REFUTED` on the tampered one. | §9 feed-fixture tests green in BOTH lanes against the SAME bytes, plus quickstart probe 10 in the testing monorepo (both twins over the live feed, byte-compared). Mutant: the tampered fixture IS the standing mutant — one flipped detail byte must refute. |
-| 15 | Declarant discipline (§2.7): the SDK marshals exactly the declarant-owned §2.2 fields (golden request bytes), `force_scores` exists in no declarant type, terminal classification is total with a fail-closed `Unknown`, and the 500 edge consults the per-intent feed before deciding. | `go test ./declarant -count=1` — golden-bytes marshal test; classification table test covering every §3.2/§3.3 cause class AND an out-of-vocabulary reason; an `httptest` 500-edge test proving the feed consult precedes the decision. Mutant: drop the `Unknown` fallback (default to retry) → classification test red. Live: quickstart probe 6 in the testing monorepo (declare through the SDK ⟹ `PROCEED`; re-declare same key ⟹ `ALREADY_RESERVED`). |
+| 15 | Declarant discipline (§2.7): the SDK marshals exactly the declarant-owned §2.2 fields (golden request bytes), `force_scores` exists in no declarant type, terminal classification is total with a fail-closed `Unknown`, and the 500 edge consults the per-intent feed before deciding. | `go test ./declarant -count=1` — golden-bytes marshal test; classification table test covering every §3.2/§3.3 cause class AND an out-of-vocabulary reason; an `httptest` 500-edge test proving the feed consult precedes the decision. Mutant: drop the `Unknown` fallback (default to retry) → classification test red. Python twin (2026-08-18): `python -m pytest declarant/pydeclarant` — the SAME golden bytes byte-compared, the same classification totality incl. out-of-vocabulary, and an in-process-HTTP 500-edge call-order proof. Live: quickstart probe 6 in the testing monorepo (declare through the SDK ⟹ `PROCEED`; re-declare same key ⟹ `ALREADY_RESERVED`). |
 
 ---
 

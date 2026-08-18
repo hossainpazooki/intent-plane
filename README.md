@@ -152,6 +152,7 @@ go test ./core/internal/contractcheck -count=1 -v          # the contract pins (
 go test ./verifier -count=1 -v                             # the Go verifier over the frozen feed fixtures
 core/scorer/.venv/Scripts/python -m pytest verifier/pyverifier   # the Python twin, same bytes
 go test ./declarant -count=1 -v                            # the declarant: golden bytes, classification, 500 edge
+core/scorer/.venv/Scripts/python -m pytest declarant/pydeclarant  # the declarant's Python twin, same golden bytes
 ```
 
 Or take the demand side's seat directly — hand the CLI a feed and let it
@@ -207,11 +208,12 @@ demonstration stay in the monorepo.
 | going deep on the mechanism | [`docs/architecture.md`](docs/architecture.md) + [`CONTRACT.md`](CONTRACT.md) |
 
 **Status, honestly:** the gate, scorer seam, signed-spec resolution, durable
-feed, refusal-hash commitment, the verifier twins, and the declarant SDK
-(Go; §2.7 discipline as code, proven live against the reference plane in the
-monorepo's quickstart probe 6) are built and test-pinned; key authority is
+feed, refusal-hash commitment, the verifier twins, and the declarant twins
+(Go, proven live against the reference plane in the monorepo's quickstart
+probe 6, plus a Python twin held to the same golden bytes — §2.7 discipline
+as code in both languages) are built and test-pinned; key authority is
 test-grade until production key authority lands (every signature says so); workload identity and
 record signing are staged, not built — so the verifier proves the record
-self-consistent, not never-rewritten. A Python declarant twin is recorded
-future work. The full claim-by-claim standing — nothing here asks to be
+self-consistent, not never-rewritten. The full claim-by-claim standing —
+nothing here asks to be
 believed — is in [`docs/assurance.md`](docs/assurance.md).
