@@ -10,7 +10,7 @@ classification with fail-closed `Unknown`, the 500-edge feed consult, and the
 cursor poll — plus the `intent-declare` CLI. `force_scores` exists in no
 declarant type. This page remains the normative walkthrough; the package is
 its executable form, proven live against the reference plane (the monorepo's
-quickstart probe 6).
+quickstart probes 6 and 7 — the Go SDK and the Python twin respectively).
 
 ## The shape of the integration
 
