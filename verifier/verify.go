@@ -268,7 +268,8 @@ func verifyIntent(id string, recs []record) Finding {
 		// ACHIEVED, so these two are nonempty on every grant.
 		// rule_artifact_hash is an opaque artifact-plane passthrough that a
 		// deployment may legitimately omit — absence is not contradiction
-		// (learned live: probe 9's first run refuted a correct feed on it).
+		// (learned live: the verifier recompute probe's first run refuted a
+		// correct feed on it).
 		// Fixed field order — the twins' first-missing-field reasons must
 		// agree byte-for-byte, so no map iteration here.
 		for _, fv := range [][2]string{

@@ -9,9 +9,9 @@ terminal, proceed on `ACHIEVED` or surface the refusal.
 classification with fail-closed `Unknown`, the 500-edge feed consult, and the
 cursor poll — plus the `intent-declare` CLI. `force_scores` exists in no
 declarant type. This page remains the normative walkthrough; the package is
-its executable form, proven live against the reference plane (the monorepo's
-quickstart probes 6–8 — the Go SDK, the Python twin, and the LangChain
-adapter respectively).
+its executable form, proven live against the reference plane by the testing
+monorepo's quickstart probes — one each for the Go SDK, the Python twin, the
+LangChain adapter, the MCP middleware, and the gated MCP proxy.
 
 ## The shape of the integration
 
@@ -64,12 +64,34 @@ posture only and is refused unless the server booted with
 doc. Zero-config is fail-closed: a gate booted with no trust root and no
 scorer URL authorizes nothing.
 
+## The clients never follow a redirect (2026-08-20)
+
+Both SDK clients decline HTTP redirects. If you front the gate with a proxy
+that answers a declaration with a 301/302/303, the SDK will not comply: an
+ordinary HTTP client downgrades that POST to a GET and DROPS the declaration
+body, so the redirect target receives no declaration at all — and an
+`ACHIEVED`-shaped 200 from that target would then read as authorization for
+an action nobody declared. A 3xx is therefore treated like any other
+non-200 status: the per-intent feed is consulted before anything is decided,
+and an unreachable feed decides nothing (`Indeterminate`). The gate's own
+outbound call to the scorer seam follows the same rule — a 3xx answer to
+`/ml/evaluate` is `Unevaluable`, never a criterion pass (`CONTRACT.md` §2.4;
+the declarant-side rule is §2.7).
+
+What this means operationally: an https-upgrade redirect, a moved path, or a
+path-rewriting proxy in front of the gate surfaces as refusals rather than
+as silent compliance. Point the SDK at the gate's final URL. **The rule
+dates from 2026-08-20** — it was added after a mutation pass found the hole
+in both shipped clients, so an SDK build older than that date does follow
+redirects.
+
 ## LangChain: gate a tool in one call
 
 For LangChain runtimes the embedding discipline ships pre-wired
-(`declarant/pydeclarant/langchain_adapter.py`, optional — it is the one
-pydeclarant module that imports `langchain_core`; everything else in the
-tree is stdlib-only):
+(`declarant/pydeclarant/langchain_adapter.py`, optional — it imports
+`langchain_core`, one of the two sanctioned exceptions to pydeclarant's
+stdlib-only rule; the other is the MCP gate below, and `declare.py`,
+`client.py`, and `gating.py` are stdlib-only):
 
 ```python
 from client import Client
@@ -111,6 +133,86 @@ adapter takes off your hands:
 Both SDK clients are bounded by default (30s per call); an unbounded
 client is an explicit opt-in (Go: supply your own `http.Client`; Python:
 `timeout=None`), never something you inherit by forgetting a parameter.
+
+## MCP: gate a server you own — or one you don't
+
+For MCP runtimes the same discipline ships as middleware
+(`declarant/pydeclarant/mcp_adapter.py`, optional — it imports `fastmcp`,
+the second sanctioned exception to the stdlib-only rule). Two entry points,
+ONE gate implementation:
+
+```python
+from client import Client
+from mcp_adapter import IntentGateMiddleware, gated_proxy
+
+client = Client("http://127.0.0.1:8080")   # bounded by default (30s per call)
+
+# (a) a server you OWN — attach the middleware
+server.add_middleware(
+    IntentGateMiddleware(
+        client,
+        intent_spec_hash=SPEC_HASH,    # content address of the attested spec
+        scope="per-actor",
+        run_id=agent_run_id,
+        tools={"wire_transfer"},       # optional; omit to gate every tool
+    )
+)
+
+# (b) a server you do NOT own — front it, unchanged
+gated = gated_proxy(
+    backend,                           # whatever fastmcp's create_proxy accepts
+    client,
+    intent_spec_hash=SPEC_HASH,
+    scope="per-actor",
+    run_id=agent_run_id,
+)
+```
+
+`gated_proxy` attaches that same middleware to a proxy front end, which is
+what makes it usable against a backend you cannot modify: the fronted server
+never learns the gate exists, and **a refused call never reaches it at all**
+— the gate declares and refuses before the pass-through fires. That is the
+capability the framework adapter does not have, and it is the reason to
+front a third-party MCP server rather than ask its owner to integrate.
+
+- **Refusals arrive as `ToolError`.** The tool body runs ONLY on a fresh
+  synchronous `Proceed`; every other outcome — `ShadowRecorded`,
+  `Indeterminate`, the fail-closed `Unknown`, and the adapter-level
+  `ALREADY_ACHIEVED` — raises `ToolError` with the body never called. MCP
+  gives you no structured error channel, so the classification rides the
+  message as literal substrings: `class=<CLASS>`, `terminal=`, `reason=`,
+  and `retry_safe=<true|false>` (the §2.7 same-key retry position). Match on
+  those, not on prose.
+- **The `tools=` filter is opt-in narrowing, and an unlisted tool passes
+  UNGATED.** The default (`tools=None`) gates every tool; naming a subset is
+  the operator's explicit choice to leave the rest ungoverned. Pass a
+  collection of names — a bare string is refused at construction, because
+  `tools="wire_transfer"` is a collection of CHARACTERS that no tool name
+  matches, which would silently leave everything ungated.
+- **`strict_args`: a refusal you will meet in practice.** On the proxy path
+  the gate sees a JSON Schema and no callable, so a call that OMITS a
+  non-required property whose schema declares no default is REFUSED before
+  anything is declared — the effective value is unknowable from a schema
+  alone (a remote `default_factory` is invisible in JSON Schema), and
+  guessing it would fork the idempotency key. The remedy is to pass the
+  property explicitly. `strict_args=False` is the explicit opt-out, and it
+  is a written acceptance that such a call is keyed AS SPELLED. A `required`
+  property that is absent is refused in both paths regardless of this flag.
+  Recorded residual, on the proxy path only: a genuine union
+  (`anyOf`/`oneOf` with more than one non-null branch) is left as spelled,
+  so two equivalent spellings of one value would fork the key — `CONTRACT.md`
+  §2.7 records this as a standing fail-open.
+- **Stateless deployment — replicas need no shared state.** The gate holds
+  nothing between calls. The idempotency key is DERIVED from the action's
+  identity, so a retry that lands on a different replica derives the same
+  key and is refused just as correctly as on the original; each call still
+  mints its OWN fresh episode seed (key + per-invocation nonce), so no
+  intent id is ever redeclared. Run identity — `scope`, `run_id`,
+  `intent_spec_hash` — is middleware CONFIGURATION, not session state:
+  configure every replica identically and scale horizontally.
+
+Like the LangChain adapter, the MCP gate is optional: on a host without
+`fastmcp` its tests skip visibly and nothing else in the tree changes.
 
 ## Forwarding the record to observability — logs index, gates decide
 
