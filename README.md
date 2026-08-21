@@ -7,14 +7,55 @@ the gate.**
 Before an agent moves money, files a report, or triggers a workflow, it must
 **declare the intent**. A deterministic gate authorizes it against a policy
 specification a human **signed** — or refuses. Every decision commits to a
-durable record, built to be independently recomputed later. The worst case,
-everywhere in this system, is an action that wrongly waits — never one that
-wrongly executes.
+durable record, built to be independently recomputed later.
+
+```mermaid
+flowchart TD
+    subgraph SUPPLY["supply side — the integrator"]
+        S["the platform team —<br/>how agents call tools"]
+        DECL["declarant/<br/>one integration point,<br/>every agent inherits it"]
+        S --- DECL
+    end
+    subgraph PLANE["the intent plane"]
+        G{"the gate<br/>agents propose —<br/>it disposes"}
+        FEED[("append-only feed<br/>one durable record<br/>per decision")]
+        G -->|fail-closed| FEED
+    end
+    subgraph DEMAND["demand side — the buyer"]
+        V["verifier/<br/>re-derives every record<br/>from the feed alone"]
+        D["audit · compliance ·<br/>model risk · diligence"]
+        V --- D
+    end
+    DECL -->|"declare · await the terminal"| G
+    FEED -->|"recompute — no trust<br/>in the gate"| V
+    D -.->|"requires examinable records"| S
+
+    classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
+    classDef pkg fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
+    classDef durable fill:#93c5fd,stroke:#1d4ed8,stroke-width:2px,color:#111827;
+    class S,D,G neutral;
+    class DECL,V pkg;
+    class FEED durable;
+    style SUPPLY fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+    style DEMAND fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+    style PLANE fill:#f8fafc,stroke:#94a3b8,color:#111827;
+```
+
+Read it left to right. The platform team embeds the **amber `declarant/`
+package** once, at the framework layer, and every agent inherits the gate.
+The gate refuses anything it cannot evaluate and writes exactly one durable
+record per decision into the **blue feed**. The accountability function —
+audit, compliance, model risk, a counterparty's diligence — runs the **amber
+`verifier/` package** over that feed and re-derives every decision without
+running, or trusting, a line of the gate's code. Those two amber packages
+are what this repo ships: one per side of the sale, meeting at the record.
+The worst case, everywhere in this system, is an action that wrongly waits
+— never one that wrongly executes.
 
 ## Gate the call, three ways
 
-The gate sits at the tool-call seam, not in the prompt. Embed it once at the
-framework layer and every agent inherits it:
+The gate sits at the tool-call seam, not in the prompt. Embed it once and
+every agent inherits it:
 
 ```python
 from client import Client
@@ -53,47 +94,12 @@ is laid out for both:
 
 | | who | their question | their artifact |
 |---|---|---|---|
-| **demand side** | the accountability function — audit, compliance, model risk, a counterparty's diligence | "prove what your agents did, without asking us to trust your code" | **`verifier/`, ships here**: a Go package + CLI and a stdlib-only Python twin that re-derive every record from the feed alone — import-pinned to run none of the gate's code |
-| **supply side** | the platform team wrapping the agent runtime ("how our agents call tools") | "one integration point, every agent inherits it" | the `declarant/` package: exact wire marshal, derived idempotency keys, a total terminal classification, the 500-edge feed consult — plus the LangChain and MCP adapters above |
+| **demand side** | the accountability function — audit, compliance, model risk, a counterparty's diligence | "prove what your agents did, without asking us to trust your code" | **`verifier/`**: a Go package + CLI and a stdlib-only Python twin that re-derive every record from the feed alone — import-pinned to run none of the gate's code |
+| **supply side** | the platform team wrapping the agent runtime ("how our agents call tools") | "one integration point, every agent inherits it" | **`declarant/`**: exact wire marshal, derived idempotency keys, a total terminal classification, the 500-edge feed consult — plus the LangChain and MCP adapters above |
 
 The demand side *requires*; the supply side *satisfies the requirement* by
-embedding once at the framework layer. What connects them is not a report
-either side writes — it is the record itself, examinable by construction:
-
-```mermaid
-flowchart TD
-    subgraph SUPPLY["supply side — the integrator"]
-        S["the platform team —<br/>how agents call tools"]
-        DECL["declarant/<br/>one integration point,<br/>every agent inherits it"]
-        S --- DECL
-    end
-    subgraph PLANE["the intent plane"]
-        G{"the gate<br/>agents propose —<br/>it disposes"}
-        FEED[("append-only feed<br/>one durable record<br/>per decision")]
-        G -->|fail-closed| FEED
-    end
-    subgraph DEMAND["demand side — the buyer"]
-        V["verifier/<br/>re-derives every record<br/>from the feed alone"]
-        D["audit · compliance ·<br/>model risk · diligence"]
-        V --- D
-    end
-    DECL -->|"declare · await the terminal"| G
-    FEED -->|"recompute — no trust<br/>in the gate"| V
-    D -.->|"requires examinable records"| S
-
-    classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
-    classDef pkg fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
-    classDef durable fill:#93c5fd,stroke:#1d4ed8,stroke-width:2px,color:#111827;
-    class S,D,G neutral;
-    class DECL,V pkg;
-    class FEED durable;
-    style SUPPLY fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
-    style DEMAND fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
-    style PLANE fill:#f8fafc,stroke:#94a3b8,color:#111827;
-```
-
-The two **amber packages are what this repo ships** — one per side of the
-sale; the blue feed is the record they meet at. (The full system picture —
+embedding once. What connects them is not a report either side writes — it
+is the record itself, examinable by construction. (The full system picture —
 settlement consumer, wire seams, where each package sits — is drawn in
 [`docs/assurance.md`](docs/assurance.md).)
 
@@ -131,8 +137,49 @@ existed — the claim-by-mechanism map is [`docs/assurance.md`](docs/assurance.m
 
 ## Distribution
 
-Four pieces ship from this repo, and they reach you four different ways —
-one of which is "you build it yourself", said plainly:
+Four pieces ship from this repo, by four different routes, to two kinds of
+reader. One route is "you build it yourself", and the diagram says so:
+
+```mermaid
+flowchart LR
+    subgraph SHIPS["what ships from this repo"]
+        GO["Go packages<br/>verifier/ · declarant/<br/>stdlib-only, Go 1.26"]
+        PY["Python twin + adapters<br/>declarant/pydeclarant/<br/>core modules stdlib-only"]
+        KIT["the examiner's kit<br/>intent-verify + frozen fixtures"]
+        CON["CONTRACT.md<br/>the source the code is held to"]
+    end
+    subgraph ROUTE["how it reaches you"]
+        GET["go get<br/>module proxy + checksum database"]
+        VEND["vendor the tree<br/>no PyPI package exists"]
+        BUILD["scripts/release.sh<br/>you build it — not a published release"]
+        READ["read it here<br/>pinned by contractcheck"]
+    end
+    subgraph TAKES["who takes it"]
+        PLAT["the platform team<br/>embeds once"]
+        AUD["the auditor<br/>runs it on a feed"]
+        ANY["any reader"]
+    end
+    GO -->|"sumdb checksum"| GET
+    GET --> PLAT
+    PY -->|"golden bytes shared with Go"| VEND
+    VEND --> PLAT
+    KIT -->|"SHA256SUMS + reproducible<br/>build flags"| BUILD
+    BUILD --> AUD
+    CON --> READ
+    READ --> ANY
+
+    classDef pkg fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
+    classDef durable fill:#93c5fd,stroke:#1d4ed8,stroke-width:2px,color:#111827;
+    classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
+    classDef self fill:#fef3c7,stroke:#b45309,stroke-width:2px,stroke-dasharray:6 4,color:#111827;
+    class GO,PY,KIT pkg;
+    class CON durable;
+    class GET,VEND,READ,PLAT,AUD,ANY neutral;
+    class BUILD self;
+    style SHIPS fill:#f8fafc,stroke:#94a3b8,color:#111827;
+    style ROUTE fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+    style TAKES fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+```
 
 | piece | how you get it | integrity |
 |---|---|---|
@@ -141,7 +188,7 @@ one of which is "you build it yourself", said plainly:
 | **The examiner's kit** — `intent-verify` + frozen fixtures | **Build it: `scripts/release.sh`.** Cross-compiles for linux/amd64, linux/arm64, darwin/arm64 and windows/amd64, and bundles the byte-frozen good/tampered feed pair with their expected reports ([`verifier/KIT.md`](verifier/KIT.md)) | `SHA256SUMS` in the kit, plus three load-bearing build flags (`-trimpath -buildvcs=false -ldflags=-buildid=`) so an auditor can rebuild and match |
 | **The contract** — [`CONTRACT.md`](CONTRACT.md) | Read it here. It is the source the code is held to, not a summary written after the fact | the pins in `core/internal/contractcheck` |
 
-Two things this table deliberately does not claim. The kit is **not
+Two things this section deliberately does not claim. The kit is **not
 published as a release artifact** — `dist/` is gitignored and there is no
 release automation, so today you build it and hand it to your auditor
 yourself. And release integrity stops at **checksums, not signatures**:
