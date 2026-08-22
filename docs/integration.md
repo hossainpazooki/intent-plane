@@ -214,6 +214,52 @@ front a third-party MCP server rather than ask its owner to integrate.
 Like the LangChain adapter, the MCP gate is optional: on a host without
 `fastmcp` its tests skip visibly and nothing else in the tree changes.
 
+## Regulatory reporting (stdlib-only)
+
+`reporting_adapter.py` gates report SUBMISSIONS. The plane never sees the
+report; it keys the report's regulatory identity and refuses the second
+submission of the same logical report however its bytes differ.
+
+```python
+from client import Client
+from reporting_adapter import ReportIdentity, gate_submission, gate_batch, reconcile
+
+client = Client("http://127.0.0.1:8080")
+SPECS = {"VALU": VALU_SPEC_HASH, "EROR": EROR_SPEC_HASH}   # an erasure declares under a human-judgment spec
+
+ident = ReportIdentity(reporting_entity=MY_LEI, uti=uti, action_type="VALU",
+                       rule_set="ESMA-EMIR-REFIT-VR-1.4.0", as_of="2026-08-21")
+done = gate_submission(ident, lambda: tr.submit(report_xml), client,
+                       intent_spec_hash=SPECS, scope="per-actor", run_id=run_id)
+# done.key is recomputable from `ident` alone; done.result is the TR's ack.
+
+# Later, the auditor:
+achieved, _ = client.poll_achieved(since=0)
+print(reconcile(achieved, submission_log_identities, scope="per-actor", run_id=run_id).ok)
+```
+
+What it refuses before declaring anything: an unknown action type, an empty
+base field, a discriminator the action type does not key on, a non-ISO
+`as_of`, an action type with no mapped spec. What the gate refuses after
+declaring: everything in the section 2.7 class table, including the
+human-judgment abstention for erasures. `gate_batch` is one outcome per
+record and promises no batch atomicity. The action-type table is
+EMIR-Refit-shaped and must be verified against the current validation
+rules before any production claim.
+
+Normalize identity fields before you build a `ReportIdentity`. Leading or
+trailing whitespace and non-NFC Unicode are refused before anything is
+declared, but letter case is keyed as given: `529900T8BM49AURSDO55` and its
+lowercase spelling derive two different keys, and a retry spelled the other
+way is NOT refused as a duplicate. Case-folding is deliberately left to the
+caller (`CONTRACT.md` §2.7, recorded residual) because the module cannot know
+whether case is significant for your identifier scheme.
+
+A CDM desk: `gate_cdm_event(step, ...)` reads the UTI and refs from the
+`WorkflowStep` and returns the outcome as a `WorkflowStep` keyed by the
+plane's idempotency key; pass your `Qualify_*` dispatch as `qualifier=` to
+refuse a step whose declared intent is not what its instruction qualifies as.
+
 ## Forwarding the record to observability — logs index, gates decide
 
 The durable feed is a line-delimited JSON file

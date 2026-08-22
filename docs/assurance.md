@@ -12,7 +12,7 @@ when someone who does **not** trust the gate re-derives the record afterward.
 
 ```mermaid
 flowchart LR
-    subgraph SUPPLY["supply side — the platform team embeds once"]
+    subgraph DECLARANT["the declarant (platform side) — embeds once"]
         AG["agent proposes"] --> FW["framework layer (the declarant)<br/>declare · await terminal ·<br/>proceed or surface"]
     end
     subgraph PLANE["the intent plane"]
@@ -20,7 +20,7 @@ flowchart LR
         FEED[("append-only feed<br/>fsync per append · cursor seq")]
         G -->|"exactly one durable record<br/>per authorized action"| FEED
     end
-    subgraph DEMAND["demand side — the accountability function"]
+    subgraph VERIFIER["the verifier (audit side) — the accountability function"]
         V["verifier — audit · compliance ·<br/>model risk (runs verifier/,<br/>shipped in this repo)"]
     end
     ATT["attester (human officer)<br/>signs the policy spec"] -.->|"signed, content-addressed,<br/>revocable artifact"| G
@@ -28,7 +28,7 @@ flowchart LR
     G -->|"synchronous terminal:<br/>ACHIEVED or a closed refusal set"| FW
     FEED -->|"poll by cursor — settle only<br/>from observed ACHIEVED"| S["settlement consumer<br/>at-most-once ledger"]
     FEED -->|"re-derive hashes · replay lifecycle ·<br/>count grants — no trust in the gate"| V
-    DEMAND -.->|"requires examinable records"| SUPPLY
+    VERIFIER -.->|"requires examinable records"| DECLARANT
 
     classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
     classDef durable fill:#93c5fd,stroke:#1d4ed8,stroke-width:2px,color:#111827;
@@ -36,8 +36,8 @@ flowchart LR
     class AG,FW,G,S,ATT neutral;
     class FEED durable;
     class V star;
-    style SUPPLY fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
-    style DEMAND fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+    style DECLARANT fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+    style VERIFIER fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
     style PLANE fill:#f8fafc,stroke:#94a3b8,color:#111827;
 ```
 
@@ -119,6 +119,7 @@ normative role vocabulary — declarant / author / attester / gate — is
 | The embedding discipline ships as code — declare once, inherit everywhere | built · test-grade | `declarant/` (Go, §2.7): exact §2.2 wire marshal pinned by golden request bytes; `DeriveKey` makes idempotency keys deterministic from action identity; terminal classification is TOTAL over the closed cause vocabulary with a fail-closed `Unknown` (mutant: dropping the fallback goes red); the 500 edge consults the per-intent feed BEFORE deciding (`httptest`-pinned call order); `force_scores` exists in no declarant type (reflection-pinned). The Python twin (`declarant/pydeclarant/`, 2026-08-18) is held to the SAME frozen golden bytes, the same total classification with fail-closed `Unknown`, and an in-process-HTTP call-order proof of the 500-edge feed consult; its core modules (`declare.py`, `client.py`, `gating.py`) are stdlib-only — the TWO exceptions are the optional adapters, which import `langchain_core` and `fastmcp` respectively (tests use pytest, like the verifier twin's). **Redirects are never followed (2026-08-20):** a 301/302/303 answer to a declaration would make an ordinary client downgrade the POST to GET and DROP the declaration body, and an `ACHIEVED`-shaped 200 from the redirect target would then read as authorization for an action never declared; both clients now decline redirects and treat a 3xx like any other non-200 (feed consult first, unreachable feed ⇒ `Indeterminate`), pinned by a test in each lane that answers the declaration with a 3xx to a second origin and asserts no Proceed and no declaration body at that origin. Honestly stated: the hole was found by a 2026-08-20 mutation pass in code that had already shipped and been live-proven — what was green over the redirect-following clients was a suite that asserted nothing about a 3xx at all. Named blocker: the live-path proof (the quickstart's Go-SDK and Python-twin declarant probes — each declares ⇒ `PROCEED`, same-key re-declare ⇒ `ALREADY_RESERVED`; run 2026-08-20 at 14/14 probes on the PowerShell lane) runs in the testing monorepo, not here — a reader of this repo can re-run every byte/mutant pin but not the live ladder. |
 | Framework adapter fail-closed — a gated LangChain tool executes only on `Proceed` | built · test-grade | `langchain_adapter.py` (§2.7, claim 16): every non-`Proceed` class — fail-closed `Unknown` included — raises a structured refusal with the wrapped tool's call count unchanged (mutant: executing on `Indeterminate` goes red); each invocation declares under its own per-call intent, pinned by a consult-URL test that a wrap-time seed fails; a `Proceed` read back from the 500-edge consult is historical and refuses (`ALREADY_ACHIEVED`) rather than re-firing the consequence — execution requires a synchronous `Proceed`; canonicalization is a fixed recipe so input form cannot fork the idempotency key; string input is refused before any declaration; each invocation declares under a FRESH intent (key + per-invocation nonce), so no intent id is ever redeclared. Live: the monorepo's quickstart LangChain-adapter probe (shipped 2026-08-18, green on both OS lanes) — its FIRST live run was refuted by the verifier on a reused episode seed the unit double could not see, which is the fix the fresh nonce records. Named blocker: adapter tests skip visibly where `langchain_core` is absent, and the live leg runs in the testing monorepo, not here. |
 | MCP gate fail-closed — a gated MCP tool call executes only on `Proceed`, on a server you own or one you merely front | built · test-grade | `mcp_adapter.py` (§2.7, claim 17, 2026-08-20): `IntentGateMiddleware` gates a server the operator owns; `gated_proxy` attaches the SAME middleware to a proxy front end, so a server the operator does NOT own is gated without changing it and never sees a refused call at all. Every non-`Proceed` outcome — fail-closed `Unknown` and the adapter-level `ALREADY_ACHIEVED` included — raises a `ToolError` carrying the class, terminal, reason, and retry position with the tool's call count unchanged (mutant: executing on `Indeterminate` goes red). The idempotency key is invariant across every SPELLING of one logical action — a nested object left empty or spelled out, an omitted `default_factory` value, `500` vs `500.0` — asserted against a KEY-AWARE gate double that refuses an already-reserved key, so the battery proves NON-DUPLICATION (one execution, an `ALREADY_RESERVED` refusal on the second spelling) rather than the weaker key-equality the old key-BLIND double already satisfied; mirrored negative controls prove genuinely different arguments still execute twice. Every call carries its own fresh episode seed, including across INDEPENDENT middleware instances — the stateless multi-replica case, live-proven by a second instance refusing the same retry with its own counter at 0. On the proxy path, an omitted property with no schema-discoverable default is refused BEFORE any declaration (`strict_args`; `strict_args=False` is the written opt-out). Recorded residual, honestly: on the proxy path a genuine `anyOf`/`oneOf` union with more than one non-null branch is keyed as spelled — a standing **fail-open** (§2.7), not closed. Live: the monorepo's quickstart MCP-middleware and gated-proxy probes (2026-08-20; the proxy's INNER counter is what proves the refused call never reached the backend). Named blocker: MCP tests skip visibly where `fastmcp` is absent, and both live legs run in the testing monorepo, not here. |
+| Reporting adapter fail-closed and content-blind — `gate_submission` invokes the caller's `submit()` only on a fresh synchronous `Proceed`, and the idempotency key is a function of the report's regulatory IDENTITY alone, never its content | built · test-grade | `reporting_adapter.py` (§2.7, claim 18, 2026-08-21): every other outcome, out-of-vocabulary `Unknown` included, raises `IntentRefused` with `submit` never called. A same-identity/different-content pair against the KEY-AWARE double asserts one key, `ALREADY_RESERVED`, and a submit count of exactly 1, while two identities differing only in `rule_set`, `as_of`, `event_ref`, or `prior_ref` derive different keys. A non-keyed discriminator that is non-empty, an unknown action type, or an empty base field is refused BEFORE any declaration POST; an erasure declares under its own action type's spec hash and is refused by the GATE's human-judgment abstention, not by this module. `reconcile` recomputes keys from a submission log and reports exactly the bijection defects — including the case where the gate's OWN at-most-once invariant breaks (one key ACHIEVED twice, logged once), which reads as a gate-side defect, never a log-side one. Mutants: execute `submit()` on `Indeterminate` ⇒ the refusal matrix goes red; include the non-keyed discriminator in the canonical payload instead of refusing ⇒ the strictness battery goes red; drop `rule_set` from the payload ⇒ the negative control goes red. Live: the reporting-gate probe in the testing monorepo (2026-08-21, both OS lanes — a valuation submitted ONCE on a live `Proceed`, repository counter 1; the same identity with DIFFERENT report bytes was refused `ALREADY_RESERVED`, counter still 1; an erasure under a human-judgment spec was refused by the GATE, counter 0; an unkeyable report declared nothing — the recompute probe's intent count landing on 21 rather than 22 is the evidence, and the ladder now asserts that number). Recorded residual: letter case in identity fields is not normalized (§2.7). |
 
 ## Known production-posture gaps, recorded rather than hidden
 
@@ -152,9 +153,11 @@ authorize against a signed spec, collide on idempotency, refuse an unattested
 hash, revoke and watch the reason surface, declare through the declarant SDK
 (derived key ⇒ `PROCEED`, same key again ⇒ `ALREADY_RESERVED`), gate a
 LangChain tool, gate an MCP server through the middleware and a second one
-through the proxy (each firing its consequence exactly once), kill the
+through the proxy (each firing its consequence exactly once), submit a
+regulatory report through the reporting adapter and watch a same-identity
+retry and an unresolved human-judgment obligation both get refused, kill the
 scorer and watch the system deny, then re-derive the whole live feed with
 both verifier twins and byte-compare their reports — in one command,
 self-asserting, against the live scoring service
 (`treasury/quickstart.ps1` / `.sh`, expected final line
-`RESULT: 14/14 probes passed`).
+`RESULT: 15/15 probes passed`).

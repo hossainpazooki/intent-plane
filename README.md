@@ -11,7 +11,7 @@ durable record, built to be independently recomputed later.
 
 ```mermaid
 flowchart TD
-    subgraph SUPPLY["supply side — the integrator"]
+    subgraph PLATFORM["platform side — the integrator"]
         S["the platform team —<br/>how agents call tools"]
         DECL["declarant/<br/>one integration point,<br/>every agent inherits it"]
         S --- DECL
@@ -21,7 +21,7 @@ flowchart TD
         FEED[("append-only feed<br/>one durable record<br/>per decision")]
         G -->|fail-closed| FEED
     end
-    subgraph DEMAND["demand side — the buyer"]
+    subgraph AUDIT["audit side — the accountability function"]
         V["verifier/<br/>re-derives every record<br/>from the feed alone"]
         D["audit · compliance ·<br/>model risk · diligence"]
         V --- D
@@ -36,8 +36,8 @@ flowchart TD
     class S,D,G neutral;
     class DECL,V pkg;
     class FEED durable;
-    style SUPPLY fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
-    style DEMAND fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+    style PLATFORM fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+    style AUDIT fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
     style PLANE fill:#f8fafc,stroke:#94a3b8,color:#111827;
 ```
 
@@ -52,7 +52,7 @@ are what this repo ships: one per side of the sale, meeting at the record.
 The worst case, everywhere in this system, is an action that wrongly waits
 — never one that wrongly executes.
 
-## Gate the call, three ways
+## Gate the call, four ways
 
 The gate sits at the tool-call seam, not in the prompt. Embed it once and
 every agent inherits it:
@@ -61,6 +61,7 @@ every agent inherits it:
 from client import Client
 from langchain_adapter import gate_tool                    # needs langchain-core
 from mcp_adapter import IntentGateMiddleware, gated_proxy  # needs fastmcp
+from reporting_adapter import ReportIdentity, gate_submission  # stdlib only
 
 client = Client("http://127.0.0.1:8080")     # bounded, 30s per call, by default
 
@@ -75,6 +76,12 @@ server.add_middleware(IntentGateMiddleware(
 # (c) an MCP server you do NOT own — front it, unchanged
 gated = gated_proxy(backend, client,
                     intent_spec_hash=SPEC_HASH, scope="per-actor", run_id=run_id)
+
+# (d) a regulatory-report submission — the plane never sees the report
+done = gate_submission(ReportIdentity(reporting_entity=LEI, uti=uti, action_type="VALU",
+                                      rule_set=RULES, as_of="2026-08-21"),
+                       lambda: tr.submit(xml), client,
+                       intent_spec_hash=SPECS, scope="per-actor", run_id=run_id)
 ```
 
 The tool body runs **only** on a fresh synchronous `Proceed`. Everything
@@ -94,10 +101,10 @@ is laid out for both:
 
 | | who | their question | their artifact |
 |---|---|---|---|
-| **demand side** | the accountability function — audit, compliance, model risk, a counterparty's diligence | "prove what your agents did, without asking us to trust your code" | **`verifier/`**: a Go package + CLI and a stdlib-only Python twin that re-derive every record from the feed alone — import-pinned to run none of the gate's code |
-| **supply side** | the platform team wrapping the agent runtime ("how our agents call tools") | "one integration point, every agent inherits it" | **`declarant/`**: exact wire marshal, derived idempotency keys, a total terminal classification, the 500-edge feed consult — plus the LangChain and MCP adapters above |
+| **audit side** (the verifier) | the accountability function — audit, compliance, model risk, a counterparty's diligence | "prove what your agents did, without asking us to trust your code" | **`verifier/`**: a Go package + CLI and a stdlib-only Python twin that re-derive every record from the feed alone — import-pinned to run none of the gate's code |
+| **platform side** (the declarant) | the platform team wrapping the agent runtime ("how our agents call tools") | "one integration point, every agent inherits it" | **`declarant/`**: exact wire marshal, derived idempotency keys, a total terminal classification, the 500-edge feed consult — plus the LangChain, MCP, and regulatory-reporting adapters above, and a dict-shaped CDM `WorkflowStep` bridge |
 
-The demand side *requires*; the supply side *satisfies the requirement* by
+The audit side *requires*; the platform side *satisfies the requirement* by
 embedding once. What connects them is not a report either side writes — it
 is the record itself, examinable by construction. (The full system picture —
 settlement consumer, wire seams, where each package sits — is drawn in
@@ -131,6 +138,15 @@ Fail-closed is a posture, and these are its teeth:
 - **The unknown.** Any outcome outside the contractually closed vocabulary
   classifies as `Unknown` and refuses. New cause classes amend the contract
   first.
+- **The same report twice, however its bytes differ.** A regulatory
+  submission is keyed by its regulatory identity — entity, trade, action
+  type, rule set — never by its content, so a second valuation for one trade
+  on one day is refused even when the number inside has changed. That is the
+  duplicate a trade repository will *not* reject for you. One stated limit:
+  identity fields are keyed verbatim after a whitespace and Unicode-form
+  check, and letter *case* is deliberately not folded — normalize case
+  upstream, or two casings of one identifier are two reports
+  (`CONTRACT.md` §2.7 records why that stays the operator's call).
 
 Each of these is pinned by tests that were made to fail before the guard
 existed — the claim-by-mechanism map is [`docs/assurance.md`](docs/assurance.md).
@@ -284,7 +300,7 @@ go test ./declarant -count=1 -v                            # the declarant: gold
 core/scorer/.venv/Scripts/python -m pytest declarant/pydeclarant  # the declarant's Python twin + the LangChain and MCP adapters (each adapter's tests skip visibly without its framework)
 ```
 
-Or take the demand side's seat directly — hand the CLI a feed and let it
+Or take the audit side's seat — the verifier's — directly: hand the CLI a feed and let it
 re-derive everything:
 
 ```bash
@@ -293,9 +309,11 @@ go run ./verifier/cmd/intent-verify core/contract/feed/events-tampered.jsonl  # 
 ```
 
 There is also a one-command live demonstration — a real gate and scorer, a
-14-probe ladder running keygen, attestation, revocation, declarations from
+15-probe ladder running keygen, attestation, revocation, declarations from
 both SDK languages, a gated LangChain tool, a gated MCP server, a gated MCP
-proxy fronting a server the operator does not own, a scorer outage, and a
+proxy fronting a server the operator does not own, a live reporting-adapter
+submission refused for a same-identity retry and for an unresolved
+human-judgment obligation, a scorer outage, and a
 final recompute of the whole live feed by both verifier twins. It lives with
 the reference application in the maintainers' testing monorepo, which is
 **private** — so, said plainly: a reader of this repo cannot run the live
@@ -312,10 +330,10 @@ intent-plane/
 │                    #   the scorer (Python, core/scorer), wire + feed fixtures
 ├── plane/           # the signed artifact: envelope, spec store, resolver
 │                    #   (verification ONLY — no signing seat in this repo)
-├── verifier/        # the demand side's package: Go pkg + cmd/intent-verify +
+├── verifier/        # the audit side's package: Go pkg + cmd/intent-verify +
 │                    #   Python twin (pyverifier/); imports NOTHING from this
 │                    #   module outside its own tree (§7.1)
-├── declarant/       # the supply side's package: Go pkg + cmd/intent-declare +
+├── declarant/       # the platform side's package: Go pkg + cmd/intent-declare +
 │                    #   Python twin (pydeclarant/) with the LangChain and MCP
 │                    #   adapters; force_scores exists in NO declarant type (§2.7)
 └── docs/            # architecture · assurance · integration
