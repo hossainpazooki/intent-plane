@@ -23,10 +23,15 @@ enforceable until a designated attester signs it — maker-checker discipline
 applied to what automated agents act on. Attested artifacts are sealed and
 revocable: a signed tombstone withdraws authority, the withdrawal is itself
 part of the record, and a tombstone signed by any other key does not revoke.
-This SDK's half of the claim is structural: **no signing seat exists anywhere
-in this repo** — the core is verification-only and imports no application
-package. The deployment half (workload identity) is staged, not built — see
-`docs/assurance.md`.
+This claim's structural half is an import-graph fact, in two parts. **The
+core holds no signing seat**: `core/` and `plane/` are verification-only and
+import no application package (`TestImportBoundary`), so the SDK verifies
+what applications sign and can never sign in their place. **Within an
+application tree, key operations sit behind one seat**: only a tree's
+`control` package — its attester seat — may import that tree's `authority`
+package in production code (`TestKeyPossessionBoundary`), so a drafting seat
+structurally cannot reach a key. The deployment half (workload identity) is
+staged, not built — see `docs/assurance.md`.
 
 **3 · Fail-closed, twice, with one record.** Every declared intent is scored
 pass / fail / unevaluable — which never passes. Missing data denies; volatile

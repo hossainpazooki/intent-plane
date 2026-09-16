@@ -204,12 +204,16 @@ flowchart LR
 | **The examiner's kit** — `intent-verify` + frozen fixtures | **Build it: `scripts/release.sh`.** Cross-compiles for linux/amd64, linux/arm64, darwin/arm64 and windows/amd64, and bundles the byte-frozen good/tampered feed pair with their expected reports ([`verifier/KIT.md`](verifier/KIT.md)) | `SHA256SUMS` in the kit, plus three load-bearing build flags (`-trimpath -buildvcs=false -ldflags=-buildid=`) so an auditor can rebuild and match |
 | **The contract** — [`CONTRACT.md`](CONTRACT.md) | Read it here. It is the source the code is held to, not a summary written after the fact | the pins in `core/internal/contractcheck` |
 
-Two things this section deliberately does not claim. The kit is **not
+Three things this section deliberately does not claim. The kit is **not
 published as a release artifact** — `dist/` is gitignored and there is no
 release automation, so today you build it and hand it to your auditor
-yourself. And release integrity stops at **checksums, not signatures**:
+yourself. Release integrity stops at **checksums, not signatures**:
 signing releases is a decision that has not been taken, and saying so is
-cheaper than implying a chain of custody this project does not have.
+cheaper than implying a chain of custody this project does not have. And
+the showcase application (`treasury/`, below) is **not a fifth shipped
+piece**: nothing in it is meant to be embedded or vendored. It is a
+demonstration you run in place from this clone — which is a different
+claim, and a smaller one, than shipping.
 
 ## Three commitments
 
@@ -220,8 +224,13 @@ cheaper than implying a chain of custody this project does not have.
 2. **Authority is key possession.** The AI-facing drafting side (the author
    role) holds no keys and structurally cannot sign; nothing is enforceable
    until a human attester signs it, and a signed tombstone revokes it —
-   maker-checker for what agents act on. (The signing seats live in the
-   application built on this SDK; this repo ships the verification half.)
+   maker-checker for what agents act on. (The seats live here, one layer
+   out from the core, in the plane table: `planetable/authoring` drafts and
+   holds no keys, `planetable/control` is the attester's seat, and
+   `planetable/authority` is the key-operations package only that seat may
+   import — a pinned import-graph fact, not a code-review promise. The core
+   itself has no signing seat, and key authority stays test-grade until
+   production key authority lands.)
 3. **Fail-closed, twice, with one record.** Verdicts are pass / fail /
    unevaluable — which never passes. Volatile facts and the authority itself
    are re-verified at the last moment before the consequence fires, and the
@@ -291,7 +300,7 @@ The decision flow with every guard, branch by branch, is drawn in
 ## Try it
 
 ```bash
-go build ./... && go vet ./... && go test ./... -count=1   # the Go gate + consumer trees (add -race via WSL on Windows)
+go build ./... && go vet ./... && go test ./... -count=1   # the gate, the plane table, the consumer trees, the showcase flow (add -race via WSL on Windows)
 cd core/scorer && .venv/Scripts/python -m pytest           # the Python scorer
 go test ./core/internal/contractcheck -count=1 -v          # the contract pins (boundary, vocabulary, neutrality)
 go test ./verifier -count=1 -v                             # the Go verifier over the frozen feed fixtures
@@ -314,12 +323,22 @@ both SDK languages, a gated LangChain tool, a gated MCP server, a gated MCP
 proxy fronting a server the operator does not own, a live reporting-adapter
 submission refused for a same-identity retry and for an unresolved
 human-judgment obligation, a scorer outage, and a
-final recompute of the whole live feed by both verifier twins. It lives with
-the reference application in the maintainers' testing monorepo, which is
-**private** — so, said plainly: a reader of this repo cannot run the live
-ladder today. What you can run here is everything above — the full suite
-including every byte-comparison and mutant pin — and the examiner's kit
-against its frozen fixture pair ([`verifier/KIT.md`](verifier/KIT.md)).
+final recompute of the whole live feed by both verifier twins. It ships
+here now, with the showcase application in [`treasury/`](treasury/README.md),
+and boots both processes itself:
+
+```bash
+powershell -File treasury\quickstart.ps1   # Windows
+./treasury/quickstart.sh                   # Linux · macOS · WSL
+```
+
+Run from this tree on 2026-09-15 it printed `RESULT: 15/15 probes passed`,
+with exactly seven `ACHIEVED` records among the 149 events it wrote and both
+verifier twins recomputing that live feed to `VERIFIED intents=21
+verified=21 refuted=0 unverifiable=0` — Go and Python reports identical.
+Everything above runs here too: the full suite including every
+byte-comparison and mutant pin, and the examiner's kit against its frozen
+fixture pair ([`verifier/KIT.md`](verifier/KIT.md)).
 
 ## Layout
 
@@ -329,22 +348,30 @@ intent-plane/
 ├── core/            # the gate (Go, core/cmd/server + core/internal/…),
 │                    #   the scorer (Python, core/scorer), wire + feed fixtures
 ├── plane/           # the signed artifact: envelope, spec store, resolver
-│                    #   (verification ONLY — no signing seat in this repo)
+│                    #   (verification ONLY — the core has no signing seat)
+├── planetable/      # the plane table, one layer out from the core:
+│                    #   authoring/ (the drafting chassis — holds no keys),
+│                    #   control/ (the attester's seat: attest · publish ·
+│                    #   revoke · promote), authority/ (key operations —
+│                    #   only control/ may import it, pinned)
+├── treasury/        # the showcase application: signed spec drafts, probe
+│                    #   payloads, the chassis flow test, and the quickstart
+│                    #   that runs the 15-probe ladder live
 ├── verifier/        # the audit side's package: Go pkg + cmd/intent-verify +
 │                    #   Python twin (pyverifier/); imports NOTHING from this
 │                    #   module outside its own tree (§7.1)
 ├── declarant/       # the platform side's package: Go pkg + cmd/intent-declare +
 │                    #   Python twin (pydeclarant/) with the LangChain and MCP
 │                    #   adapters; force_scores exists in NO declarant type (§2.7)
-└── docs/            # architecture · assurance · integration
+└── docs/            # architecture · assurance · integration · adr/
 ```
 
-This repo is the **published SDK**, and ownership runs per tree: the
-consumer-facing packages (the verifier and the declarant) are born and
-evolve **here** — the testing monorepo consumes them back for its live
-probes. Plane internals (gate, scorer, `plane/`) are experimented on in the
-testing monorepo and ported here once they settle. The application seats
-(authority / control / authoring) and the live demonstration stay there.
+This repo is the **published SDK** and the tree the system is built in:
+the core, the plane table, the consumer-facing packages (the verifier and
+the declarant), and the showcase that exercises all of them are developed
+in one place. There is no second copy of any of it to keep in step, and no
+per-tree ownership rule to follow — the live ladder that decides whether a
+wire change is good runs against this tree.
 
 ## Read next
 
@@ -358,9 +385,12 @@ testing monorepo and ported here once they settle. The application seats
 signed-spec resolution, the durable feed, the refusal-hash commitment, the
 verifier twins, and the declarant twins — Go and Python held to the same
 golden wire bytes, with the LangChain and MCP adapters riding on top (each
-optional; each skips visibly without its framework). Key authority is
-test-grade until production key authority lands, and every signature says
-so. Workload identity and record signing are staged, not built — so the
+optional; each skips visibly without its framework). Beside them, folded in
+and building green here: the plane table's three seats — drafting, attester,
+key operations — with the key-possession boundary a fact of the import
+graph, and the showcase whose 15-probe ladder is now this repo's own live
+acceptance test. Key authority is test-grade until production key authority
+lands, and every signature says so. Workload identity and record signing are staged, not built — so the
 verifier proves the record *self-consistent*, not *never-rewritten*. The
 claim-by-claim standing — nothing here asks to be believed — is in
 [`docs/assurance.md`](docs/assurance.md).

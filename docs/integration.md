@@ -9,9 +9,10 @@ terminal, proceed on `ACHIEVED` or surface the refusal.
 classification with fail-closed `Unknown`, the 500-edge feed consult, and the
 cursor poll — plus the `intent-declare` CLI. `force_scores` exists in no
 declarant type. This page remains the normative walkthrough; the package is
-its executable form, proven live against the reference plane by the testing
-monorepo's quickstart probes — one each for the Go SDK, the Python twin, the
-LangChain adapter, the MCP middleware, and the gated MCP proxy.
+its executable form, proven live against a running gate by the quickstart
+probe ladder in `treasury/` — one each for the Go SDK, the Python twin, the
+LangChain adapter, the MCP middleware, the gated MCP proxy, and the
+regulatory-reporting gate.
 
 ## The shape of the integration
 
@@ -279,7 +280,8 @@ Two rules keep the forwarded copy honest:
 2. **Emission can never touch decisions — structurally.** The gate does not
    know the shipper exists; a dropped, lagging, or misconfigured forwarder
    cannot block or fail an authorization. Push-based trace export (OTel) is
-   staged (R4 in the project roadmap) and deliberately absent today.
+   staged (R4 in `docs/assurance.md`'s stage table) and deliberately absent
+   today.
 
 Useful monitors fall out of the event vocabulary: rate of `FAILED`
 refusals by cause prefix (`unevaluable:*` spikes mean the scorer or a fact

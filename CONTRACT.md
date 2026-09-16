@@ -15,9 +15,11 @@ The plane is a domain-agnostic authorization layer: a declarant declares an
 intent, the gate decides deterministically whether it is authorized, and the
 decision is emitted exactly once to a durable append-only feed. The gate settles
 nothing itself (**emit-and-observe**); a downstream consumer settles from the
-feed. The demonstration deployment (a `treasury/` tree in the maintainers'
-private testing monorepo) exercises the plane from outside it — this repo
-is the SDK alone.
+feed. The demonstration deployment (the `treasury/` tree) exercises the plane
+from outside the SDK packages. Since the 2026-09-15 fold this repo is no
+longer the SDK alone: it holds the core (`core/`, `plane`), the plane table
+(`planetable/` — the drafting, control and key-operations seats), and that
+showcase application.
 
 ---
 
@@ -45,12 +47,13 @@ amendment's seating):** the core is a minimal SDK for agentic deployments and
 hosts NO human-authority seats. `core/` is the gate; `plane/` is the boundary
 artifact — envelope, payload, spec store, resolver, **verification only**:
 the core verifies what applications sign. The seats live in the APPLICATION
-built on the core — the reference application is the maintainers' private
-testing monorepo, whose `treasury/` tree seats them: the author
-chassis is `treasury/authoring`; the attester's seat — the only production
-importer of `treasury/authority`'s key operations — is `treasury/control`
-(attest, publish, revoke, promote); `treasury/authority` holds every
-private-key operation. Declarants are external agents on the wire. The core structurally
+built on the core, and since the 2026-09-15 fold that application tree — the
+plane table — ships here: the author chassis is `planetable/authoring`; the
+attester's seat — the only production importer of `planetable/authority`'s
+key operations — is `planetable/control` (attest, publish, revoke, promote);
+`planetable/authority` holds every private-key operation, still under test-grade
+key authority (§2.6). The showcase application `treasury/` consumes what those
+seats publish. Declarants are external agents on the wire. The core structurally
 cannot sign and never imports an application package (`TestImportBoundary`,
 `TestKeyPossessionBoundary`): "layers bind to the artifact, never to each
 other" is the pinned import graph.
@@ -93,7 +96,7 @@ introduced; buyer-facing prose yields to the wire, not the reverse.
 | Gate | Test | Pins |
 |---|---|---|
 | vocabulary presence | `TestRoleVocabularyPresent` | `README.md` and `CONTRACT.md` speak declarant / attester / gate |
-| forbidden actor nouns | `TestForbiddenActorNouns` | zero occurrences across `.go` / `.md` / `.py` |
+| forbidden actor nouns | `TestForbiddenActorNouns` | zero occurrences across `.go` / `.md` / `.py`, except the dated-record ledgers `docs/handoff/` and `docs/learnings/`, which are exempt so a record can quote a regulatory or historical term verbatim (2026-09-15) |
 | retired proper noun | `TestRetiredProperNouns` | zero occurrences in `README.md` / `CONTRACT.md` |
 | import boundary | `TestImportBoundary` | §7 package set + adjacency |
 | core neutrality | `TestCoreNeutrality` | no domain vocabulary under `core/` (§9 exemption) |
@@ -112,7 +115,7 @@ except `core/cmd/server` lives under `core/internal/`.
 | Route | Purpose |
 |---|---|
 | `POST /v2/intents` | declaration in; verdict record out (`terminal`, `reason`, `trajectory_hash`, `achieved_seq`) |
-| `GET /v2/events?since=&type=` | the completion feed, cursor read — a **by-design gate-free read** (emit-and-observe); note it is unauthenticated (deployment posture — a recorded finding on the maintainers' private roadmap) |
+| `GET /v2/events?since=&type=` | the completion feed, cursor read — a **by-design gate-free read** (emit-and-observe); note it is unauthenticated (deployment posture — a recorded finding, carried in the maintainers' working notes) |
 | `GET /v2/intents/{id}/events` | per-intent records, ascending `intent_seq` |
 | `GET /healthz` | `200 "ok"` (`text/plain`) |
 
@@ -218,9 +221,9 @@ phase, defaults to `Pass`.
 > byte-indistinguishable from a live-scored one. The residual: wherever that
 > flag IS set, the bypass is total — it qualifies "unevaluable never passes",
 > "fail-closed twice", and "artifacts are the only crossings" in any
-> production claim, so the flag must never reach production. (The ROADMAP
-> recording this lives in the maintainers' private testing monorepo, not
-> here.)
+> production claim, so the flag must never reach production. (No roadmap file
+> ships in this repository; the residual is recorded outside its product
+> surface.)
 
 ### §2.3 The durable feed record (JSONL)
 
@@ -503,10 +506,11 @@ the **stores are never per-request**).
 
 The signed artifact and its stores live in the top-level `plane` package
 (core-side, verification only); the application seats operate on it from
-outside the SDK (reference: `treasury/control` — attest, publish, revoke,
-promote, the ONLY production importer of `treasury/authority` — and
-`treasury/authoring`, which holds no keys by import graph, in the testing
-monorepo; `TestKeyPossessionBoundary` governs any in-tree instantiation).
+outside the SDK packages — in this repository, the plane table:
+`planetable/control` (attest, publish, revoke, promote; the ONLY production
+importer of `planetable/authority`) and `planetable/authoring`, which holds no
+keys by import graph. `TestKeyPossessionBoundary` pins that separation here and
+governs any other in-tree instantiation by the same name-free rule.
 
 **Envelope (DSSE-shaped).** `{"payloadType", "payload" (b64), "signatures":
 [{"keyid", "sig", "key_authority"}]}`. The signature covers
@@ -1278,6 +1282,12 @@ terminal follows the scorer's answers).
 Each claim is verified by re-running its probe, and each probe is proven
 non-vacuous by mutating a COPY of the tree and watching it go red.
 
+The live probes cited below are the showcase quickstart ladder
+(`treasury/quickstart.ps1` / `treasury/quickstart.sh`), which ships in this
+repository since the 2026-09-15 fold and was run from it that day:
+`RESULT: 15/15 probes passed`, exactly 7 ACHIEVED among 149 events. A date
+inside a row records when that row's observation was first made, not a re-run.
+
 | # | Claim | Probe |
 |---|---|---|
 | 1 | Feed durability/recovery: events survive process restart with `GlobalSeq` intact. | `go test ./core/internal/durable -run Recovery` — append N records across two intents, `Close`, `Open` same dir, assert `ByIntent`/`Since` return all N and `max(GlobalSeq)` is preserved; truncate the last line and assert everything before it still recovers. |
@@ -1293,11 +1303,12 @@ non-vacuous by mutating a COPY of the tree and watching it go red.
 | 11 | Stable-once / volatile-twice crosses the wire: a counting `httptest` scorer sees exactly one `declaration` call per criterion and exactly one extra `dispatch` call per volatile criterion. | `TestStableOnceVolatileTwiceAcrossWire`. Mutant: drop the phase guard. |
 | 12 | Live outage refuses, never grants. | Two-process probe: gate `ACHIEVED` with the service up and facts passing; kill the service; the same intent (fresh key) ⟹ `FAILED`, `unevaluable:<criterion>`, no ACHIEVED record in the feed. The kill is real (`taskkill` / `kill`), not mocked. |
 | 13 | Refusal-hash commitment: the terminal-position record of EVERY completed authorization carries `trajectory_hash`, it recomputes from the per-intent records, and no non-terminal record carries one. | `go test ./core/internal/gate -run TerminalHash` — drive one intent per terminal class (ACHIEVED, SHADOW_RECORDED, criteria-FAILED, volatile-recheck, idempotency-collision, and a step-1 refusal) and assert the hash placement + recompute. Mutant: stamp the hash one event early. |
-| 14 | Verifier twins agree and are non-vacuous: Go and Python produce byte-identical reports on the frozen feed fixtures, `VERIFIED` on the good fixture, `REFUTED` on the tampered one. | §9 feed-fixture tests green in BOTH lanes against the SAME bytes, plus the verifier recompute probe in the testing monorepo (both twins over the live feed, byte-compared). Mutant: the tampered fixture IS the standing mutant — one flipped detail byte must refute. |
-| 15 | Declarant discipline (§2.7): the SDK marshals exactly the declarant-owned §2.2 fields (golden request bytes), `force_scores` exists in no declarant type, terminal classification is total with a fail-closed `Unknown`, and the 500 edge consults the per-intent feed before deciding. | `go test ./declarant -count=1` — golden-bytes marshal test; classification table test covering every §3.2/§3.3 cause class AND an out-of-vocabulary reason; an `httptest` 500-edge test proving the feed consult precedes the decision. Mutant: drop the `Unknown` fallback (default to retry) → classification test red. Redirect rule (2026-08-20): a 301/302/303 answer to a declaration is NOT followed in either client — a test in each lane answers the declaration POST with a 3xx pointing at a second origin that serves an `ACHIEVED`-shaped 200, and asserts the outcome is NOT a Proceed and that the second origin received no declaration body. Mutant: allow redirects again ⇒ that test goes red. What was green over the redirect-following clients was the PRE-EXISTING suite, which asserted nothing about a 3xx at all — which is how the hole shipped. Python twin (2026-08-18): `python -m pytest declarant/pydeclarant` — the SAME golden bytes byte-compared, the same classification totality incl. out-of-vocabulary, and an in-process-HTTP 500-edge call-order proof. Live: quickstart probes 6 and 7 in the testing monorepo (probe 6: the Go SDK — declare ⟹ `PROCEED`, re-declare same key ⟹ `ALREADY_RESERVED`; probe 7, 2026-08-18: the Python twin's `Client`, same two-step under its own derived key). |
-| 16 | Framework adapter fail-closed (§2.7): a wrapped LangChain tool executes ONLY on `Proceed`; every other outcome — out-of-vocabulary `Unknown` included — raises a structured refusal with the wrapped tool's call count unchanged, and every invocation declares under its own FRESH intent (episode seed = idempotency key + per-invocation nonce; same-args invocations share the key, never a seed), so no intent id is ever redeclared and the 500-edge consult never authorizes one call with another call's terminal. | `python -m pytest declarant/pydeclarant` (the adapter tests skip VISIBLY where `langchain_core` is absent) — call-counting refusal matrix incl. an out-of-vocabulary terminal; a consult-URL pin asserting the 500-edge GET carries the calling invocation's OWN intent id; string input refused with no declaration POST observed; a same-key retry whose declare 500s while its OWN feed shows committed `ACHIEVED` is refused (`ALREADY_ACHIEVED`), never re-executed — execution requires a synchronous `Proceed`. Mutant: make the adapter execute on `Indeterminate` → the call-count test goes red. Live: quickstart probe 8 in the testing monorepo (2026-08-18 — a gated tool executes ONCE on a live `Proceed`; the same-args call raises `ALREADY_RESERVED` with the tool body not re-fired). |
-| 17 | MCP gate fail-closed (§2.7): every gated MCP tool call — on a server you own via `IntentGateMiddleware`, or on one you merely front via `gated_proxy` — executes ONLY on a fresh synchronous `Proceed`; every other outcome, the out-of-vocabulary `Unknown` included, raises a `ToolError` carrying the class with the tool's call count unchanged; and the idempotency key is invariant across EVERY SPELLING of one logical action — a nested object left empty or spelled out, an omitted `default_factory` value, and equivalent JSON numeric forms all derive ONE key — while two genuinely different actions still derive different keys, and every call carries its OWN fresh episode seed, including across independent middleware instances (the stateless multi-replica case). | `python -m pytest declarant/pydeclarant` (the MCP tests skip VISIBLY where `fastmcp` is absent) — a call-counting refusal matrix incl. an out-of-vocabulary terminal; a KEY-FORK regression battery covering nested-object defaults, a partially spelled nested object, a top-level `default_factory`, and `500` vs `500.0`, each run against a KEY-AWARE gate double that refuses a key it has already reserved, so the battery asserts NON-DUPLICATION — one key, an `ALREADY_RESERVED` refusal on the second spelling, and a tool-body execution count of exactly 1 — rather than the weaker key-equality the old key-BLIND double already satisfied; with mirrored negative controls asserting that genuinely different arguments still execute twice; a proxy-path test that an omitted property with no schema-discoverable default is REFUSED before any declaration under the default `strict_args`; a two-instance same-key/different-seed test; a consult-URL pin asserting the 500-edge GET carries the calling call's OWN intent id; an unreadable-schema call refused with no declaration POST observed; and a proxy test whose INNER server's call counter proves the pass-through fired exactly once. Mutants: make the middleware execute on `Indeterminate` ⇒ the call-count test goes red; revert the canonicalization to raw-args-plus-top-level-defaults ⇒ the fork battery goes red; force the double back to KEY-BLIND ⇒ eight tests go red with "the repeat was authorized" (the same two calls execute once against the key-aware double and TWICE against the key-blind one — measured, not argued). Live: quickstart probes 9 and 10 in the testing monorepo (2026-08-20 — probe 9: a gated tool executes ONCE on a live `Proceed`, the same-args retry refuses `ALREADY_RESERVED` with the body not re-fired, and a SECOND independently constructed middleware instance under the same run refuses identically; probe 10: the gated proxy, same two-step with the INNER server's counter as the observable, plus a `strict_args` refusal that declares nothing — the recompute probe's intent count landing on 18 rather than 19 is the independent evidence of that last one) (it was GREEN over that recipe before 2026-08-20, which is how the fork shipped). |
-| 18 | Reporting adapter fail-closed and content-blind (§2.7): `gate_submission` invokes the caller's `submit()` ONLY on a fresh synchronous `Proceed`; every other outcome, the out-of-vocabulary `Unknown` included, raises `IntentRefused` with `submit` never called; the key is a function of the report's regulatory IDENTITY alone — two submissions with the same identity and DIFFERENT content derive ONE key and the second is refused `ALREADY_RESERVED` against a key-aware gate, while two identities differing only in `rule_set`, `as_of`, `event_ref`, or `prior_ref` derive different keys; a non-keyed discriminator that is non-empty, an unknown action type, or an empty base field is refused BEFORE any declaration POST; an erasure declares under the action type's own spec hash; `reconcile` recomputes keys from a submission log and reports exactly the bijection defects. | `python -m pytest declarant/pydeclarant` — the refusal matrix incl. an out-of-vocabulary terminal; a same-identity/different-content pair against the KEY-AWARE double (`_Script(key_aware=True)`) asserting one key, `ALREADY_RESERVED`, and a submit count of exactly 1; mirrored negative controls for each keyed discriminator; a strictness battery asserting zero POSTs for each pre-declaration refusal; a spec-mapping pin asserting the POSTed `intent_spec_hash` for `EROR`; a batch test with an unkeyable middle record (two POSTs, three outcomes, order preserved); reconcile fixtures for each defect class. Mutants: execute `submit()` on `Indeterminate` ⇒ the refusal matrix goes red; include the non-keyed discriminator in the canonical payload instead of refusing ⇒ the strictness battery goes red; drop `rule_set` from the payload ⇒ the negative control goes red. Live: the reporting-gate probe in the testing monorepo (2026-08-21 — a valuation submitted ONCE on a live `Proceed`, repository counter 1; the same identity with DIFFERENT report bytes was refused `ALREADY_RESERVED`, counter still 1; an erasure under the human-judgment spec was refused by the GATE, counter unchanged at 0; an unkeyable `NEWT` declared nothing — the recompute probe's intent count landing on 21 rather than 22 is the independent evidence of that last one). |
+| 14 | Verifier twins agree and are non-vacuous: Go and Python produce byte-identical reports on the frozen feed fixtures, `VERIFIED` on the good fixture, `REFUTED` on the tampered one. | §9 feed-fixture tests green in BOTH lanes against the SAME bytes, plus the verifier recompute probe — quickstart probe 15 in `treasury/` (both twins over the live feed, byte-compared; run from this repo 2026-09-15: `VERIFIED intents=21 verified=21 refuted=0 unverifiable=0`, Go and Python reports identical). Mutant: the tampered fixture IS the standing mutant — one flipped detail byte must refute. |
+| 15 | Declarant discipline (§2.7): the SDK marshals exactly the declarant-owned §2.2 fields (golden request bytes), `force_scores` exists in no declarant type, terminal classification is total with a fail-closed `Unknown`, and the 500 edge consults the per-intent feed before deciding. | `go test ./declarant -count=1` — golden-bytes marshal test; classification table test covering every §3.2/§3.3 cause class AND an out-of-vocabulary reason; an `httptest` 500-edge test proving the feed consult precedes the decision. Mutant: drop the `Unknown` fallback (default to retry) → classification test red. Redirect rule (2026-08-20): a 301/302/303 answer to a declaration is NOT followed in either client — a test in each lane answers the declaration POST with a 3xx pointing at a second origin that serves an `ACHIEVED`-shaped 200, and asserts the outcome is NOT a Proceed and that the second origin received no declaration body. Mutant: allow redirects again ⇒ that test goes red. What was green over the redirect-following clients was the PRE-EXISTING suite, which asserted nothing about a 3xx at all — which is how the hole shipped. Python twin (2026-08-18): `python -m pytest declarant/pydeclarant` — the SAME golden bytes byte-compared, the same classification totality incl. out-of-vocabulary, and an in-process-HTTP 500-edge call-order proof. Live: quickstart probes 6 and 7 in `treasury/` (probe 6: the Go SDK — declare ⟹ `PROCEED`, re-declare same key ⟹ `ALREADY_RESERVED`; probe 7, 2026-08-18: the Python twin's `Client`, same two-step under its own derived key). |
+| 16 | Framework adapter fail-closed (§2.7): a wrapped LangChain tool executes ONLY on `Proceed`; every other outcome — out-of-vocabulary `Unknown` included — raises a structured refusal with the wrapped tool's call count unchanged, and every invocation declares under its own FRESH intent (episode seed = idempotency key + per-invocation nonce; same-args invocations share the key, never a seed), so no intent id is ever redeclared and the 500-edge consult never authorizes one call with another call's terminal. | `python -m pytest declarant/pydeclarant` (the adapter tests skip VISIBLY where `langchain_core` is absent) — call-counting refusal matrix incl. an out-of-vocabulary terminal; a consult-URL pin asserting the 500-edge GET carries the calling invocation's OWN intent id; string input refused with no declaration POST observed; a same-key retry whose declare 500s while its OWN feed shows committed `ACHIEVED` is refused (`ALREADY_ACHIEVED`), never re-executed — execution requires a synchronous `Proceed`. Mutant: make the adapter execute on `Indeterminate` → the call-count test goes red. Live: quickstart probe 8 in `treasury/` (2026-08-18 — a gated tool executes ONCE on a live `Proceed`; the same-args call raises `ALREADY_RESERVED` with the tool body not re-fired). |
+| 17 | MCP gate fail-closed (§2.7): every gated MCP tool call — on a server you own via `IntentGateMiddleware`, or on one you merely front via `gated_proxy` — executes ONLY on a fresh synchronous `Proceed`; every other outcome, the out-of-vocabulary `Unknown` included, raises a `ToolError` carrying the class with the tool's call count unchanged; and the idempotency key is invariant across EVERY SPELLING of one logical action — a nested object left empty or spelled out, an omitted `default_factory` value, and equivalent JSON numeric forms all derive ONE key — while two genuinely different actions still derive different keys, and every call carries its OWN fresh episode seed, including across independent middleware instances (the stateless multi-replica case). | `python -m pytest declarant/pydeclarant` (the MCP tests skip VISIBLY where `fastmcp` is absent) — a call-counting refusal matrix incl. an out-of-vocabulary terminal; a KEY-FORK regression battery covering nested-object defaults, a partially spelled nested object, a top-level `default_factory`, and `500` vs `500.0`, each run against a KEY-AWARE gate double that refuses a key it has already reserved, so the battery asserts NON-DUPLICATION — one key, an `ALREADY_RESERVED` refusal on the second spelling, and a tool-body execution count of exactly 1 — rather than the weaker key-equality the old key-BLIND double already satisfied; with mirrored negative controls asserting that genuinely different arguments still execute twice; a proxy-path test that an omitted property with no schema-discoverable default is REFUSED before any declaration under the default `strict_args`; a two-instance same-key/different-seed test; a consult-URL pin asserting the 500-edge GET carries the calling call's OWN intent id; an unreadable-schema call refused with no declaration POST observed; and a proxy test whose INNER server's call counter proves the pass-through fired exactly once. Mutants: make the middleware execute on `Indeterminate` ⇒ the call-count test goes red; revert the canonicalization to raw-args-plus-top-level-defaults ⇒ the fork battery goes red; force the double back to KEY-BLIND ⇒ eight tests go red with "the repeat was authorized" (the same two calls execute once against the key-aware double and TWICE against the key-blind one — measured, not argued). Live: quickstart probes 9 and 10 in `treasury/` (2026-08-20 — probe 9: a gated tool executes ONCE on a live `Proceed`, the same-args retry refuses `ALREADY_RESERVED` with the body not re-fired, and a SECOND independently constructed middleware instance under the same run refuses identically; probe 10: the gated proxy, same two-step with the INNER server's counter as the observable, plus a `strict_args` refusal that declares nothing — the recompute probe's intent count landing on 18 rather than 19 is the independent evidence of that last one) (it was GREEN over that recipe before 2026-08-20, which is how the fork shipped). |
+| 18 | Reporting adapter fail-closed and content-blind (§2.7): `gate_submission` invokes the caller's `submit()` ONLY on a fresh synchronous `Proceed`; every other outcome, the out-of-vocabulary `Unknown` included, raises `IntentRefused` with `submit` never called; the key is a function of the report's regulatory IDENTITY alone — two submissions with the same identity and DIFFERENT content derive ONE key and the second is refused `ALREADY_RESERVED` against a key-aware gate, while two identities differing only in `rule_set`, `as_of`, `event_ref`, or `prior_ref` derive different keys; a non-keyed discriminator that is non-empty, an unknown action type, or an empty base field is refused BEFORE any declaration POST; an erasure declares under the action type's own spec hash; `reconcile` recomputes keys from a submission log and reports exactly the bijection defects. | `python -m pytest declarant/pydeclarant` — the refusal matrix incl. an out-of-vocabulary terminal; a same-identity/different-content pair against the KEY-AWARE double (`_Script(key_aware=True)`) asserting one key, `ALREADY_RESERVED`, and a submit count of exactly 1; mirrored negative controls for each keyed discriminator; a strictness battery asserting zero POSTs for each pre-declaration refusal; a spec-mapping pin asserting the POSTed `intent_spec_hash` for `EROR`; a batch test with an unkeyable middle record (two POSTs, three outcomes, order preserved); reconcile fixtures for each defect class. Mutants: execute `submit()` on `Indeterminate` ⇒ the refusal matrix goes red; include the non-keyed discriminator in the canonical payload instead of refusing ⇒ the strictness battery goes red; drop `rule_set` from the payload ⇒ the negative control goes red. Live: the reporting-gate probe — quickstart probe 11 in `treasury/` (2026-08-21 — a valuation submitted ONCE on a live `Proceed`, repository counter 1; the same identity with DIFFERENT report bytes was refused `ALREADY_RESERVED`, counter still 1; an erasure under the human-judgment spec was refused by the GATE, counter unchanged at 0; an unkeyable `NEWT` declared nothing — the recompute probe's intent count landing on 21 rather than 22 is the independent evidence of that last one). |
+| 19 | Maker-checker chassis, end to end: authoring pins every provision to the sha256 of its EXACT source passage and defaults a new draft to SHADOW; the attested bytes are the executed bytes — the envelope payload is byte-identical to the draft file, its hash IS the content address, and store resolution returns that same payload; promotion is a NEW artifact, never an edit in place, and leaves the shadow artifact untouched; revocation is scoped to exactly one content address, so a promoted sibling still resolves. | `go test ./treasury` — `flow_test.go` builds the REAL seat binaries and execs them as an operator would (author → keygen → root → attest → publish → promote → revoke; no production code is imported from the two `package main` seats), asserting each refusal edge at the point in the chain where it naturally occurs: keygen refuses overwrite right after keygen, wrong-root publish right after publish, double promotion right after promote. Non-vacuity: three plant-red runs recorded when the claim was first written (2026-08-12) — a defect injected into a temp copy, this test watched to fail; they have NOT been re-run since, and green-on-first-run alone proves nothing. |
 
 ---
 
@@ -1344,13 +1355,13 @@ and order-sensitive.
 ruling:** the CORE owns exactly one tree outside `core/` beside
 `core/cmd/server`: `plane` (envelope, payload, store, resolver —
 verification only), the boundary artifact the gate consumes. The authority
-seats live in the APPLICATION — no application tree ships in this repo; the
-reference instantiation is the maintainers' private testing
-monorepo: `treasury/authority` (every private-key
-operation; production-importable ONLY from `treasury/control`,
-`TestKeyPossessionBoundary`), `treasury/control`
-(attest/publish/revoke/promote), `treasury/authoring` (drafting chassis;
-holds no keys by import graph), each importing only `plane` from the SDK.
+seats live in the APPLICATION, and since the 2026-09-15 fold the application
+trees ship in this repo: the plane table `planetable/authority` (every
+private-key operation; production-importable ONLY from `planetable/control`,
+`TestKeyPossessionBoundary`), `planetable/control`
+(attest/publish/revoke/promote), `planetable/authoring` (drafting chassis;
+holds no keys by import graph), and the showcase `treasury/`, each importing
+only `plane` from the SDK.
 The core never imports an application package — applications depend on the
 SDK, never the reverse. The
 mechanical pin (`boundary_test.go`) is two-part and deliberately asymmetric:
@@ -1390,11 +1401,26 @@ Sanctioned test-only extras (edges that exist ONLY in `_test.go` files):
 a core test importing an application tree is a layering violation, not a
 sanctionable extra.
 
-Application trees (rule-pinned; none ship in this repo — the reference
-instantiation is `treasury/` in the testing monorepo): an
-application package may import only `plane` and packages within its own
-tree — never `core/internal/*` or `core/cmd/*`; within any tree, only
-`<tree>/control` may import `<tree>/authority` (`TestKeyPossessionBoundary`).
+Application trees (rule-pinned, never by name): an application package may
+import only `plane` and packages within its own tree — never
+`core/internal/*` or `core/cmd/*`; within any tree, only `<tree>/control` may
+import `<tree>/authority` (`TestKeyPossessionBoundary`). Two trees answer to
+that rule here since the 2026-09-15 fold — the plane table `planetable/` and
+the showcase `treasury/` — and the rule names neither.
+
+**Current instantiation (documentation, NOT a pinned table — the rule above is
+name-free by design and stays so).** The import edges the application trees
+actually have today (the core's own adjacency is pinned exactly by the table
+above, and `core/cmd/server` belongs to it, not here):
+
+- `planetable/authority` → `plane`
+- `planetable/control` → `plane`, `planetable/authority`
+- `planetable/authoring` → `plane`
+- `treasury` → `plane` (in `flow_test.go`, the tree's only Go file today —
+  a test edge, not a production one)
+
+The core imports no application package. Adding a tree or an edge here is a
+documentation update; it is the RULE, not this list, that governs.
 
 **Consumer trees (rule-pinned): `verifier/` (2026-08-08) and `declarant/`
 (2026-08-12).** Each imports **nothing from this module outside its own tree
@@ -1411,8 +1437,10 @@ cannot send is visible in its own tree (`force_scores` exists in no
 declarant type, §2.7). Pinned by `TestImportBoundary` (a consumer-tree file
 importing the module prefix is a violation in prod and test alike).
 
-Outside `core/internal/` live only `core/cmd/server`, `plane` (core),
-application trees, and the consumer trees `verifier` and `declarant`.
+Outside `core/internal/` the module's Go packages are only `core/cmd/server`,
+`plane` (core), the application trees, and the consumer trees `verifier` and
+`declarant` — non-Go trees (the Python scorer, the local chat tool) are not
+packages of this module and the adjacency pin does not walk them.
 `contractcheck` ships no production code and no package imports it.
 
 ### §7.2 Pinned package surfaces
@@ -1633,8 +1661,8 @@ live fact source is a LATER slice — **do not fake one**. `SCORER_FACTS_JSON`
 carries a criterion → number JSON object; **unset means an EMPTY fact map**, so
 every criterion is `UNEVALUABLE` and the gate refuses everything. That
 fail-closed posture is what a neutral core boots into; a demonstration
-deployment injects its own facts file through the same seam (the testing
-monorepo's `treasury/facts.json`). A non-object value is a boot refusal.
+deployment injects its own facts file through the same seam (the showcase's
+`treasury/facts.json`). A non-object value is a boot refusal.
 
 **Resolver, all-or-nothing.** `ArtifactResolver.verify(rule_artifact_hash,
 intent_spec_hash) -> bool`, run via `loop.run_in_executor` — `ke-artifact-py`'s
@@ -1700,8 +1728,8 @@ files that reproduce those bytes:
 `core/scorer/tests/test_fixtures.py`. The exemption is byte-pinned and
 fixture-coupled, not a judgment call — it is stated explicitly in
 `neutrality_test.go`. Regenerating the fixtures with neutral exemplar names
-(both lanes re-greening in the same change) is a recorded follow-up on the
-maintainers' private roadmap.
+(both lanes re-greening in the same change) is a recorded follow-up, carried
+in the maintainers' working notes.
 
 ### §9.1 Feed fixtures and the verifier twins (2026-08-08)
 
@@ -1734,8 +1762,8 @@ ACHIEVED for one intent or one idempotency key, or an ACHIEVED /
 SHADOW_RECORDED record missing `idempotency_key` or `intent_spec_hash` — the
 two fields the gate structurally guarantees nonempty on a grant.
 `rule_artifact_hash` is an opaque artifact-plane passthrough a deployment may
-legitimately omit: its absence is never a finding (ruled after the testing
-monorepo's verifier recompute probe's
+legitimately omit: its absence is never a finding (ruled after the verifier
+recompute probe's
 first live run refuted a correct feed on it; the good fixture pins the
 ruling with a grant that carries none). Overall verdict: `REFUTED` if anything refuted, else
 `UNVERIFIABLE` if anything unverifiable, else `VERIFIED`; the CLI exits 0

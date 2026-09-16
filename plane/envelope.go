@@ -5,9 +5,9 @@
 // criteria bytes.
 //
 // This package holds VERIFICATION only (public keys). Signing, key generation,
-// and every private-key operation live in plane/authority, and the
-// contractcheck key-possession boundary pins which packages may import that
-// side. "Holds no keys" is a code-graph fact in-repo; the deployment-graph
+// and every private-key operation live one layer out, in an application tree's
+// key-operations seat, which only that tree's control seat may import — the
+// contractcheck key-possession boundary pins it, name-free. "Holds no keys" is a code-graph fact in-repo; the deployment-graph
 // half of that claim remains ROADMAP R2, asserted.
 //
 // Key authority is TEST-GRADE (production key authority is not landed):

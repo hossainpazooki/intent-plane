@@ -5,10 +5,12 @@ package contractcheck
 // numbers that resolve only inside the maintainers' private estate are pinned
 // at zero across tracked source, docs, scripts, and data. A hit is a
 // regression, not a style issue: it either leaks an internal codename or
-// hands a public reader a reference they cannot follow. The pin exists
-// because the private estate carries older copies of some of these trees —
-// a mechanical port from there would silently re-introduce the names this
-// gate bans.
+// hands a public reader a reference they cannot follow. That is the whole
+// rationale as of the 2026-09-15 fold: the pin was first written to stop a
+// mechanical port from a second, private copy of these trees from reverting
+// the scrub, and there is no longer a second copy — but incoming work still
+// arrives carrying private names, and this gate is what catches it. It is
+// exempt nowhere, in any directory.
 
 import (
 	"os"

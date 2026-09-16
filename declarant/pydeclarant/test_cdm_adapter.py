@@ -191,8 +191,7 @@ def _cdm_workflow_step_or_skip():
             "finos-cdm not installed (test-time oracle only). NOTE: installing it does NOT "
             "make this lane run -- 7.1.0 cannot construct a WorkflowStep carrying an "
             "eventIdentifier, measured on BOTH Linux (3.12.3) and Windows (3.14.2) with "
-            "byte-identical errors, so the guard below skips too. See the 2026-08-21 "
-            "learning in the testing monorepo."
+            "byte-identical errors, so the guard below skips too."
         ),
     )
     import finos._bundle  # noqa: F401  bundle-first: direct leaf import hits a circular import
