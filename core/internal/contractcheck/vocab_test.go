@@ -38,9 +38,23 @@ func TestRoleVocabularyPresent(t *testing.T) {
 
 // TestForbiddenActorNouns: actor nouns outside the role vocabulary are pinned
 // at zero across Go source and markdown.
+//
+// EXEMPT (2026-09-15 ruling): the dated-record ledgers. A hand-off or a
+// learnings entry quotes regulatory and historical terms verbatim — the record
+// that first held this gate red named a reporting obligation, not an actor
+// role — and a gate stricter than the vocabulary it protects only produces
+// false alarms. The exemption is deliberately two directories wide: every
+// other tracked path, `docs/adr/` included, stays scanned, and the leak guard
+// (TestInternalReferencesAbsent) is exempt nowhere at all. Prove the narrowness
+// before trusting it: plant one of these nouns in CONTRACT.md and in a .go file
+// and watch this test go red.
 func TestForbiddenActorNouns(t *testing.T) {
 	root := repoRoot(t)
 	forbidden := regexp.MustCompile(`(?i)\b(principals?|requesters?)\b`)
+	exempt := map[string]bool{
+		filepath.Join("docs", "handoff"):   true,
+		filepath.Join("docs", "learnings"): true,
+	}
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -49,6 +63,9 @@ func TestForbiddenActorNouns(t *testing.T) {
 		if d.IsDir() {
 			name := d.Name()
 			if path != root && (strings.HasPrefix(name, ".") || name == "bin" || name == "data" || name == ".venv") {
+				return filepath.SkipDir
+			}
+			if rel, relErr := filepath.Rel(root, path); relErr == nil && exempt[rel] {
 				return filepath.SkipDir
 			}
 			return nil
