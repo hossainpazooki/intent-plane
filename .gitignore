@@ -2,6 +2,11 @@
 /bin/
 *.exe
 
+# the gate's default durable feed directory (INTENT_DATA_DIR, default ./data):
+# a reader who boots the gate directly rather than through the quickstart
+# drops an event log here, and it is not ours to commit.
+/data/
+
 # release kits (assembled by scripts/release.sh)
 /dist/
 

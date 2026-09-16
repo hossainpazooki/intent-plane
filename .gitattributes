@@ -4,3 +4,7 @@
 # §9.1) byte-compared from both language lanes; eol conversion would tamper
 # with the very thing the tampered-fixture test proves detectable.
 core/contract/feed/* -text
+# Spec drafts are hashed as RAW BYTES to produce the content address the gate
+# resolves (intent_spec_hash = sha256 of the payload), so an eol-converting
+# checkout would change the address of an unchanged draft.
+treasury/specs/* -text
