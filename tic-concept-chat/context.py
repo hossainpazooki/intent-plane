@@ -1,0 +1,95 @@
+"""Builds the Opus context from this repository's authoritative docs.
+
+The framing lives in the system prompt; the docs named in `DOC_NAMES` are
+attached as
+`document` content blocks with citations enabled, so every claim Opus makes can
+be anchored to the exact passage it rests on (and an uncited claim is visibly
+its own inference, not contract text).
+"""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+DOC_NAMES = ("README.md", "CONTRACT.md")
+
+FRAMING = """\
+You are a design discussion partner for the concepts underlying
+the intent plane ("tic" historically), the authorization layer for agentic
+deployments. The two authoritative documents are attached (README and the
+single current-state CONTRACT — the prior four-file amendment chain was
+consolidated into it, 2026-08; where README prose and CONTRACT disagree on a
+symbol, the CONTRACT wins).
+
+Discuss the underlying concepts rigorously: the intent lifecycle state
+machine, tri-state fail-closed scoring, idempotency by construction at the
+dispatch edge, stable vs volatile criteria, and deterministic replay from a
+logical-clock event log. Be direct and skeptical: surface disagreements and
+trade-offs explicitly rather than agreeing politely, and say "this is wrong
+because..." when it is.
+
+Ground each claim in the attached documents and cite the specific passage it
+rests on. When the documents do not settle a question, say so explicitly and
+mark the answer as your inference rather than presenting it as contract text."""
+
+
+def tic_dir() -> Path:
+    override = os.environ.get("TIC_DIR")
+    if override:
+        return Path(override)
+    # This app lives INSIDE the intent-plane repo; the authoritative docs are
+    # at the repo root, two levels up.
+    return Path(__file__).resolve().parent.parent
+
+
+def load_docs(base: Path | None = None) -> dict[str, str]:
+    base = base if base is not None else tic_dir()
+    docs: dict[str, str] = {}
+    for name in DOC_NAMES:
+        path = base / name
+        if not path.is_file():
+            raise FileNotFoundError(f"required doc not found: {path}")
+        docs[name] = path.read_text(encoding="utf-8")
+    return docs
+
+
+def build_document_blocks(base: Path | None = None) -> list[dict]:
+    """The `DOC_NAMES` docs as citation-enabled `document` blocks.
+
+    The cache breakpoint sits on the last block, so the framing + every doc
+    is cached as one prefix (they precede it in render order).
+    """
+    docs = load_docs(base)
+    blocks: list[dict] = []
+    for name, text in docs.items():
+        blocks.append(
+            {
+                "type": "document",
+                "source": {"type": "text", "media_type": "text/plain", "data": text},
+                "title": name,
+                "citations": {"enabled": True},
+            }
+        )
+    blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    return blocks
+
+
+def inject_documents(
+    messages: list[dict], blocks: list[dict] | None = None, base: Path | None = None
+) -> list[dict]:
+    """Return a copy of `messages` with the document blocks prepended to the
+    first (user) turn's content. The browser never carries the ~18K-token docs;
+    the server injects them here so the cached prefix stays byte-identical.
+    """
+    if not messages:
+        return []
+    if blocks is None:
+        blocks = build_document_blocks(base)
+    out = [dict(m) for m in messages]
+    content = out[0]["content"]
+    if isinstance(content, str):
+        content = [{"type": "text", "text": content}]
+    else:
+        content = list(content)
+    out[0]["content"] = blocks + content
+    return out
