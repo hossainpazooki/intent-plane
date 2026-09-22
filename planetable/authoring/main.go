@@ -149,6 +149,11 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+	// The chassis never writes what the parser would refuse: the same rules
+	// that guard attest/publish/resolve (§2.6 name rules) guard the draft.
+	if _, err := plane.ParseSpecPayload(out); err != nil {
+		fail(err)
+	}
 	if err := os.WriteFile(a["-out"], out, 0o644); err != nil {
 		fail(err)
 	}
