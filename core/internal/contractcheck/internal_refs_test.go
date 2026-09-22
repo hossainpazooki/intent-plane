@@ -36,7 +36,7 @@ func TestInternalReferencesAbsent(t *testing.T) {
 	}
 
 	exts := map[string]bool{
-		".go": true, ".md": true, ".py": true, ".sh": true,
+		".go": true, ".md": true, ".py": true, ".sh": true, ".ps1": true,
 		".json": true, ".jsonl": true, ".toml": true, ".yml": true, ".yaml": true,
 	}
 
