@@ -29,8 +29,8 @@ func TestInternalReferencesAbsent(t *testing.T) {
 		"ATLAS",        // retired codename (scrubbed 2026-08-16)
 		"COMPASS",      // retired codename (scrubbed 2026-08-16)
 		"SCORER_ATLAS", // retired env-var prefix (renamed 2026-08-16, shim-free)
-		"treasury-intent-controller", // the maintainers' private monorepo
-		"regulatory-rule-engine",     // a third private project (re-architected away 2026-08-18)
+		"treasury-intent-controller", // a cross-project identifier this tree must not reference, by design
+		"regulatory-rule-engine",     // a cross-project identifier this tree must not reference, by design
 		"ke-cli",                     // that project's CLI ("ke_artifact_py", the wheel, is a real dependency and stays)
 		"ADR-00",                     // private decision-record numbers (de-numbered 2026-08-18)
 	}
