@@ -52,5 +52,7 @@ overrides). Absent fixtures SKIP visibly — a skip is NOT a pass.
   policy/context set). Mixed-kind requests (a rule hash + a spec hash from
   different corpora) fail closed rather than verify both; the fix is a
   binding-side kind-aware environment, an rule-engine follow-up.
-- **[planned — later slice]** a live fact source. `StaticFactSource` is the
-  demo configuration and is labeled as such; do not fake a live one.
+- **[built 2026-11-03]** a live fact source loads at boot through
+  `SCORER_FACTS_MODULE` (CONTRACT §8); `StaticFactSource` stays the demo
+  configuration and is the fallback the hook receives. The service itself
+  ships no live source.

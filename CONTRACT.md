@@ -414,11 +414,20 @@ five original fields are required):
 - `phase` ∈ `"declaration" | "dispatch"` (mirrors `intent.Phase`).
 - `volatility` ∈ `"stable" | "volatile"` — so the service can log/route without
   inferring from phase.
-- The two hashes are optional (`omitempty`) and OPAQUE to the wire: they exist
-  so the resolver can verify the governing `IntentSpec` artifact before scoring.
-  **When present and a resolver is configured, verification failure ⟹
-  `UNEVALUABLE`.** When absent or no resolver: skip verification (recorded in
-  `basis`), score from facts.
+- The two hashes are optional (`omitempty`) and OPAQUE to the wire. Which of
+  them the service verifies is a boot-time choice (`SCORER_VERIFY_HASHES`, §8):
+  `all` (the default) verifies every hash present against the artifact store;
+  `rule` (2026-11-03) verifies `rule_artifact_hash` only, because
+  `intent_spec_hash` is the plane's own signed-payload hash (§2.6), which no
+  artifact store holds and which the plane's verifier already re-derives.
+  **When a hash is to be verified and a resolver is configured, verification
+  failure ⟹ `UNEVALUABLE`, answered BEFORE any fact is looked up.** When a
+  hash is to be verified but no resolver is configured, verification is
+  skipped and `basis` says so (`resolver=null: verification skipped; `). In
+  `rule` mode a request with no `rule_artifact_hash` is UNBOUND (`basis`
+  starts `rule-artifact: unbound; `). In `all` mode a request carrying
+  neither hash has nothing to verify and is scored with no verification note.
+  In each of these three cases the fact is then scored.
 - Tri-state on the wire is the closed string set `"PASS" | "FAIL" |
   "UNEVALUABLE"`. Any other value, absent field, or malformed body ⟹ the client
   scores `Unevaluable`.
@@ -484,6 +493,8 @@ it is free text and would poison determinism.
 | `SCORER_HOST`, `SCORER_PORT` | scorer | uvicorn bind; defaults `127.0.0.1`, `8000` |
 | `SCORER_FACTS_JSON` | scorer | criterion → number JSON object. Unset ⟹ EMPTY fact map ⟹ every criterion `UNEVALUABLE` (§8) |
 | `SCORER_ARTIFACT_DIR`, `SCORER_VERIFY_INPUTS_DIR`, `SCORER_EXPORTED_AT_UNIX` | scorer | resolver config, all-or-nothing (§8) |
+| `SCORER_VERIFY_HASHES` | scorer | `all` (default) or `rule` (§2.4, §8). Any other value, or `rule` without the resolver block, is a boot refusal |
+| `SCORER_FACTS_MODULE` | scorer | importable module exposing `fact_source_from_env(fallback) -> FactSource` (§8); unset ⟹ the static map alone; set but not importable, or without the factory ⟹ boot refusal |
 | `SCORER_CONTRACT_DIR` | scorer tests | override for the §9 fixture directory |
 | `SCORER_GOLDENS_DIR` | scorer tests | the wheel-lane artifact goldens checkout — the lane's ONLY wiring; unset ⟹ the lane skips VISIBLY |
 
@@ -872,7 +883,11 @@ class and reason in `messageInformation`, and the idempotency KEY is the
 step's `eventIdentifier` so a CDM consumer can recompute the plane's record
 by key. `gate_cdm_event` closes the loop -- CDM step in, gated submission,
 CDM step out: it reads the identity, gates the caller's `submit()` exactly as
-`gate_submission` does, and returns the outcome as a `WorkflowStep`. Gate
+`gate_submission` does, and returns the outcome as a `WorkflowStep`. Both
+functions accept `rule_artifact_hash: str = ""` (2026-11-03): a non-empty
+value rides the declaration as the §2.4 passthrough (omitted from the wire
+when empty) and neither adapter reads it -- the citation is the caller's,
+the verification is the scorer's (§8), and the record is the plane's. Gate
 refusals are RETURNED as steps, never raised -- the refusal step IS the
 record a CDM consumer stores, carrying the SAME `eventIdentifier` (the key)
 an ACHIEVED step for that identity would, so a consumer can correlate the
@@ -885,8 +900,9 @@ nothing), the agent said one thing and proposed another and nothing is
 declared. The qualifier hook is compared only as a string, keeping this
 module free of any CDM dependency.
 
-The `finos-cdm` package is a TEST-TIME ORACLE ONLY, and as of 2026-08-21 it
-cannot serve even that role: `test_cdm_adapter.py` validates the emitted
+The `finos-cdm` package is a TEST-TIME ORACLE ONLY, and as of 2026-08-21
+(7.1.0), re-measured 2026-11-03 (7.9.0), it cannot serve even that role:
+`test_cdm_adapter.py` validates the emitted
 shape with `WorkflowStep.model_validate` and SKIPS VISIBLY, because 7.1.0
 cannot construct a `WorkflowStep` carrying a populated `eventIdentifier` --
 `model_validate` refuses it ("Input should be None") since the lazily
@@ -898,6 +914,11 @@ it. A skipped oracle is never a green one: until then the bridge's emitted
 shape is asserted only against this section, never against CDM's own types.
 Recorded limit: CDM's `proposedEvent`/`businessEvent` are being consolidated
 upstream; the mapping is one function per direction so a re-map is one edit.
+The 2026-11-03 re-measurement localised the cause: the Python generator
+emits `None` placeholders for lazily bundled nested types, so `Identifier`
+inside `WorkflowStep.eventIdentifier` stays `None` at validation; 7.9.0 also
+makes `timestamp` required. The fix belongs upstream in the generator, not
+in this bridge.
 
 ---
 
@@ -1320,6 +1341,7 @@ inside a row records when that row's observation was first made, not a re-run.
 | 18 | Reporting adapter fail-closed and content-blind (§2.7): `gate_submission` invokes the caller's `submit()` ONLY on a fresh synchronous `Proceed`; every other outcome, the out-of-vocabulary `Unknown` included, raises `IntentRefused` with `submit` never called; the key is a function of the report's regulatory IDENTITY alone — two submissions with the same identity and DIFFERENT content derive ONE key and the second is refused `ALREADY_RESERVED` against a key-aware gate, while two identities differing only in `rule_set`, `as_of`, `event_ref`, or `prior_ref` derive different keys; a non-keyed discriminator that is non-empty, an unknown action type, or an empty base field is refused BEFORE any declaration POST; an erasure declares under the action type's own spec hash; `reconcile` recomputes keys from a submission log and reports exactly the bijection defects. | `python -m pytest declarant/pydeclarant` — the refusal matrix incl. an out-of-vocabulary terminal; a same-identity/different-content pair against the KEY-AWARE double (`_Script(key_aware=True)`) asserting one key, `ALREADY_RESERVED`, and a submit count of exactly 1; mirrored negative controls for each keyed discriminator; a strictness battery asserting zero POSTs for each pre-declaration refusal; a spec-mapping pin asserting the POSTed `intent_spec_hash` for `EROR`; a batch test with an unkeyable middle record (two POSTs, three outcomes, order preserved); reconcile fixtures for each defect class. Mutants: execute `submit()` on `Indeterminate` ⇒ the refusal matrix goes red; include the non-keyed discriminator in the canonical payload instead of refusing ⇒ the strictness battery goes red; drop `rule_set` from the payload ⇒ the negative control goes red. Live: the reporting-gate probe — quickstart probe 11 in `treasury/` (2026-08-21 — a valuation submitted ONCE on a live `Proceed`, repository counter 1; the same identity with DIFFERENT report bytes was refused `ALREADY_RESERVED`, counter still 1; an erasure under the human-judgment spec was refused by the GATE, counter unchanged at 0; an unkeyable `NEWT` declared nothing — the recompute probe's intent count landing on 21 rather than 22 is the independent evidence of that last one). |
 | 19 | Maker-checker chassis, end to end: authoring pins every provision to the sha256 of its EXACT source passage and defaults a new draft to SHADOW; the attested bytes are the executed bytes — the envelope payload is byte-identical to the draft file, its hash IS the content address, and store resolution returns that same payload; promotion is a NEW artifact, never an edit in place, and leaves the shadow artifact untouched; revocation is scoped to exactly one content address, so a promoted sibling still resolves. | `go test ./treasury` — `flow_test.go` builds the REAL seat binaries and execs them as an operator would (author → keygen → root → attest → publish → promote → revoke; no production code is imported from the two `package main` seats), asserting each refusal edge at the point in the chain where it naturally occurs: keygen refuses overwrite right after keygen, wrong-root publish right after publish, double promotion right after promote. Non-vacuity: three plant-red runs recorded when the claim was first written (2026-08-12) — a defect injected into a temp copy, this test watched to fail; they have NOT been re-run since, and green-on-first-run alone proves nothing. |
 | 20 | Name rules are enforced at parse (§2.6, 2026-09-22): a criterion or human-judgment name that is empty, contains `:`, or repeats within its list is refused by `ParseSpecPayload`, and therefore by every seal point that calls it — `control attest`, `Store.Publish`, `Store.Resolve` — and by the authoring chassis before a draft is written. Zero criteria still parse (thinness stays the gate's refusal, step 1b). | `go test ./plane -run TestParseSpecPayloadNameRules` (six refusals, two parses); `go test ./planetable/authoring` (`TestDraftRefusesDuplicateCriterionName` execs the real seat binary and asserts no file is written). Mutant: delete the `validateNames` call ⇒ both go red. Consequence for pre-rule payloads: resolve returns `ErrUnattested` ⇒ `unevaluable:unattested-spec` (fail-closed). |
+| 21 | An external probabilistic judge answers a scored criterion behind the UNCHANGED `/ml/evaluate` wire without a probability entering the record (§2.4, §8, 2026-11-03): the showcase's System One (TypeSafe AI, Jev `jev-1.14.0`) fact source returns the judge's noul probability as the FACT, the signed spec's threshold decides PASS/FAIL in the evaluator, and every upstream failure -- timeout, non-200, redirect, missing or non-finite answer, model mismatch, fault injection -- is `None` ⟹ `UNEVALUABLE` ⟹ refusal. A human-judgment provision refuses BEFORE the scorer is consulted; an unverifiable `rule_artifact_hash` refuses BEFORE the fact is looked up. | Ladder probe 16 (`treasury/probes/cdm_scored_live.py`: grant / `POLICY_DENIED` / `UNEVALUABLE` / `HUMAN_JUDGMENT`, each leg printing the adapter call-log delta and the feed's SCORED count as two independent witnesses) and probe 17 (`treasury/probes/provenance_root_live.py`: a verified citation scores, a rejected one refuses with the call log unchanged; Linux/WSL lane, skips visibly without `ke-artifact-py`); unit lanes `core/scorer/tests/test_app.py` (`rule` mode) and `treasury/scorer_ext/test_systemone_facts.py`. Mutants: move the fact lookup above verification in `app.py` ⇒ probe 17 leg 2 prints `calls=+1`, red; delete gate step 1a5 (the human-judgment refusal in `gate.go`) ⇒ probe 16 leg 4 prints `scored_records=1`, red. Both planted and dated in this row by the ladder task before the row is pushed. |
 
 ---
 
@@ -1667,8 +1689,12 @@ app's catch-all around the whole handler IS the contract: every internal failure
 is an evaluation that answers `UNEVALUABLE`.
 
 **Facts.** `FactSource.get(criterion, intent_id) -> float | None`.
-`StaticFactSource` is both the test double and a deployment's configuration; a
-live fact source is a LATER slice — **do not fake one**. `SCORER_FACTS_JSON`
+`StaticFactSource` is both the test double and a deployment's configuration. A
+LIVE fact source is loaded at boot through `SCORER_FACTS_MODULE` (2026-11-03):
+the named module's `fact_source_from_env(fallback)` receives the static map and
+returns the `FactSource` the service scores from; the service itself ships no
+live source (the showcase's `treasury/scorer_ext/` does). A module that does
+not import, or lacks the factory, refuses the boot. `SCORER_FACTS_JSON`
 carries a criterion → number JSON object; **unset means an EMPTY fact map**, so
 every criterion is `UNEVALUABLE` and the gate refuses everything. That
 fail-closed posture is what a neutral core boots into; a demonstration
@@ -1685,9 +1711,18 @@ intent_spec_hash) -> bool`, run via `loop.run_in_executor` — `ke-artifact-py`'
   `ke-artifact-py` wheel ⟹ the lazy import crashes the boot loudly. **A server
   the operator configured to verify must never silently not-verify.**
 - Unset ⟹ `NullResolver`, the Windows-local default: verification is **skipped
-  and said so on the wire** (`basis` carries `resolver=null: verification
-  skipped; `). `NullResolver.verify` raises if ever called — calling it is a
-  bug, and the app's catch-all fails that closed to `UNEVALUABLE`.
+  and said so on the wire** for a request carrying a hash (`basis` carries
+  `resolver=null: verification skipped; `); a request carrying no hash has
+  nothing to verify and gets no note. `NullResolver.verify` raises if ever
+  called — calling it is a bug, and the app's catch-all fails that closed to
+  `UNEVALUABLE`.
+- `SCORER_VERIFY_HASHES` (2026-11-03): `all` (default) hands the resolver every
+  hash on the request; `rule` hands it `rule_artifact_hash` alone and treats a
+  request without one as UNBOUND (`basis` starts `rule-artifact: unbound; `,
+  then the fact is scored). `rule` without the resolver block, or any other
+  value, refuses the boot. With a resolver configured, verification precedes
+  the fact lookup in both modes: an unverifiable citation never reaches the
+  fact source.
 - `KeArtifactResolver` indexes a directory of `.kew` files once, lazily, by
   manifest artifact hash; a file that does not decode as a canonical artifact is
   simply absent from the index, so requesting its hash fails closed. `verify()`
