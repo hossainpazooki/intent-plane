@@ -1,0 +1,26 @@
+{
+  "reserve-backed": {
+    "instructions": "You are checking an e-money token issuer's reserve attestation against the reserve-assets rule: reserve assets must at all times be at least equal to the tokens outstanding, be segregated from the issuer's own funds, and be held in high-quality liquid assets available on demand.",
+    "criteria": {
+      "true": "The attestation shows reserves at or above 100 percent of tokens outstanding, segregated from the issuer's own funds, in high-quality liquid assets available on demand.",
+      "false": "Reserves are below tokens outstanding, commingled with the issuer's funds, or held in assets that are illiquid, encumbered, or unspecified."
+    },
+    "evidence": "../evidence/reserve-backed.txt"
+  },
+  "reserve-shortfall-absent": {
+    "instructions": "You are checking an e-money token issuer's reserve attestation against the reserve-assets rule: reserve assets must at all times be at least equal to the tokens outstanding, be segregated from the issuer's own funds, and be held in high-quality liquid assets available on demand.",
+    "criteria": {
+      "true": "The attestation shows reserves at or above 100 percent of tokens outstanding, segregated from the issuer's own funds, in high-quality liquid assets available on demand.",
+      "false": "Reserves are below tokens outstanding, commingled with the issuer's funds, or held in assets that are illiquid, encumbered, or unspecified."
+    },
+    "evidence": "../evidence/reserve-shortfall-absent.txt"
+  },
+  "reserve-audit-current": {
+    "instructions": "You are checking an e-money token issuer's reserve attestation against the reserve-assets rule: reserve assets must at all times be at least equal to the tokens outstanding, be segregated from the issuer's own funds, and be held in high-quality liquid assets available on demand.",
+    "criteria": {
+      "true": "The attestation shows reserves at or above 100 percent of tokens outstanding, segregated from the issuer's own funds, in high-quality liquid assets available on demand.",
+      "false": "Reserves are below tokens outstanding, commingled with the issuer's funds, or held in assets that are illiquid, encumbered, or unspecified."
+    },
+    "evidence": "../evidence/reserve-audit-current.txt"
+  }
+}

@@ -1,0 +1,7 @@
+Reserve attestation, Example Issuer S.A., e-money token EXT, as of 2026-10-31.
+Tokens outstanding: 100,000,000 EXT (1 EXT = 1 EUR).
+Reserve assets: 81,000,000 EUR, of which 55,000,000 EUR in sight deposits
+and 26,000,000 EUR in a 180-day term deposit at the issuer's parent bank,
+held together with the issuer's operating cash in one account.
+The auditor notes a shortfall of 19,000,000 EUR against tokens outstanding
+and that the term deposit is not available on demand.
