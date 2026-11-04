@@ -77,8 +77,31 @@ if ! "$venv_py" -c 'import fastmcp' 2>/dev/null; then
         "$venv_py" -m pip install --user --break-system-packages -q 'fastmcp>=3,<4'
 fi
 
-echo "[boot] scorer with treasury facts (balance=250, fx_rate=1.30)"
-SCORER_FACTS_JSON=$(cat "$here/facts.json") SCORER_PORT=$scorer_port "$venv_py" -m scorer &
+# The scorer's fact source is the showcase's System One adapter
+# (scorer_ext/) in REPLAY mode over the committed recording, falling back to
+# the static treasury facts for probes 1-15. One line per get() lands in the
+# call log, which probes 16 and 17 read as the scorer-side witness. The
+# resolver is configured ONLY where ke-artifact-py imports (Linux/WSL); then
+# the rule-only verify mode makes the vendored provenance pack the root.
+call_log="$data_dir/scorer-calls.jsonl"
+verified_hash=13a414cf7f6b25c6b6049c0953a83ff5697044aabafbd44b87e87fc4ed90f8a9
+rejected_hash=72a60976bcd55fc9a9b088cada4aae10cfbb4aabf066a8e85c403dbeae893d94
+provenance_mode=skip
+if "$venv_py" -c 'import ke_artifact_py' 2>/dev/null; then provenance_mode=verify; fi
+echo "[boot] scorer: static treasury facts (balance=250, fx_rate=1.30) + System One adapter in replay (provenance: $provenance_mode)"
+(
+    export PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}"
+    export SCORER_FACTS_JSON="$(cat "$here/facts.json")" SCORER_PORT="$scorer_port"
+    export SCORER_FACTS_MODULE=scorer_ext.systemone_facts SCORER_FACTS_MODE=replay
+    export SCORER_FACTS_BOOK="$here/scorer_ext/criteria.json"
+    export SCORER_FACTS_RECORDING="$here/recordings/systemone-jev-1.14.0.jsonl"
+    export SCORER_FACTS_CALL_LOG="$call_log" SCORER_FACTS_FAULT=reserve-audit-current
+    if [ "$provenance_mode" = verify ]; then
+        export SCORER_ARTIFACT_DIR="$here/provenance" SCORER_VERIFY_INPUTS_DIR="$here/provenance/inputs"
+        export SCORER_EXPORTED_AT_UNIX=1750000000 SCORER_VERIFY_HASHES=rule
+    fi
+    exec "$venv_py" -m scorer
+) &
 scorer_pid=$!
 
 echo "[boot] building the gate, the plane role CLIs, the verifier, and the declarant"
@@ -107,6 +130,9 @@ hash02=$(attest_publish 02-near-duplicate.spec.json)
 hash03=$(attest_publish 03-over-threshold.spec.json)
 hash05=$(attest_publish 05-thin.spec.json)
 hash08=$(attest_publish 08-erasure-human-judgment.spec.json)
+hash09=$(attest_publish 09-reserve-backed.spec.json)
+hash10=$(attest_publish 10-reserve-shortfall.spec.json)
+hash11=$(attest_publish 11-reserve-audit-unbound.spec.json)
 
 echo "[boot] starting the gate (trust root + spec store wired)"
 INTENT_SCORER_URL="http://127.0.0.1:$scorer_port/ml/evaluate" INTENT_DATA_DIR="$data_dir" \
@@ -255,6 +281,45 @@ else
 fi
 echo "       why it matters: the second valuation for one UTI and date is the duplicate a trade repository will NOT reject - refused here by identity, not content; the erasure is refused by the gate's own abstention, not by adapter code"
 
+# Probe 16 (the scored-CDM probe, CONTRACT.md 5.4 claim 21): a CDM step is
+# gated on a criterion the showcase's System One adapter scores through the
+# unchanged /ml/evaluate wire. Each leg prints two independent witnesses of
+# whether the scorer was consulted: the adapter call-log delta and the feed's
+# SCORED count. Runs BEFORE the scorer is killed.
+p16_rc=0; p16=$("$venv_py" "$here/probes/cdm_scored_live.py" "$gate_url" "$hash09" "$hash10" "$hash11" "$hash08" "$call_log") || p16_rc=$?
+case "$p16" in
+    *"scored grant: class=ACHIEVED submitted=1 calls=+1 scored_records=1"*"scored refuse: class=POLICY_DENIED submitted=0 calls=+1 scored_records=1"*"scored outage: class=UNEVALUABLE submitted=0 calls=+1 scored_records=1"*"human judgment: class=HUMAN_JUDGMENT submitted=0 calls=+0 scored_records=0"*) p16_ok=1;;
+    *) p16_ok=0;;
+esac
+if [ "$p16_rc" -eq 0 ] && [ "$p16_ok" = 1 ]; then
+    pass=$((pass + 1)); echo "[PASS] scored CDM step (live): $(printf '%s' "$p16" | tr '\n' ';')"
+else
+    fail=$((fail + 1)); echo "[FAIL] scored CDM step (live): rc=$p16_rc out=$(printf '%s' "$p16" | tr '\n' ';')"
+fi
+echo "       why it matters: the judge's probability is a FACT the signed threshold decides on and never a record - a low score, an unreachable judge and a human-judgment provision each refuse, and the last one refuses with the judge never asked (calls=+0, scored_records=0)"
+
+# Probe 17 (the provenance-root probe): the SAME spec, declared twice citing a
+# rule artifact by content hash - once the one that verifies, once the one
+# the verifier rejects. The rejected citation is refused BEFORE any fact is
+# looked up (calls=+0). Needs the resolver, hence ke-artifact-py: skipped
+# visibly elsewhere and never counted as a pass.
+skipped=0
+if [ "$provenance_mode" = verify ]; then
+    p17_rc=0; p17=$("$venv_py" "$here/probes/provenance_root_live.py" "$gate_url" "$hash09" "$call_log" "$verified_hash" "$rejected_hash") || p17_rc=$?
+    case "$p17" in
+        *"provenance verified: class=ACHIEVED submitted=1 calls=+1 scored_records=1"*"provenance rejected: class=UNEVALUABLE submitted=0 calls=+0 scored_records=1"*) p17_ok=1;;
+        *) p17_ok=0;;
+    esac
+    if [ "$p17_rc" -eq 0 ] && [ "$p17_ok" = 1 ]; then
+        pass=$((pass + 1)); echo "[PASS] provenance root (live): $(printf '%s' "$p17" | tr '\n' ';')"
+    else
+        fail=$((fail + 1)); echo "[FAIL] provenance root (live): rc=$p17_rc out=$(printf '%s' "$p17" | tr '\n' ';')"
+    fi
+    echo "       why it matters: a criterion that cites a published rule artifact is scored only after the artifact verifies - the authoring plane is the provenance root, and an unverifiable citation never reaches the judge"
+else
+    skipped=1; echo "[SKIP] provenance root (live): ke-artifact-py is not importable in the scorer's python, so the resolver was not configured (Linux/WSL lane)"
+fi
+
 echo "[chaos] killing the scorer to prove fail-closed on outage"
 kill "$scorer_pid"; sleep 1
 # Probe 12
@@ -263,8 +328,10 @@ probe "declare during scorer outage" 04-outage.json "$hash02" FAILED unevaluable
 probe "attested-but-thin spec" 05-empty-criteria.json "$hash05" FAILED unevaluable:empty-criteria "thin-spec defense - attestation does not launder vacuity; zero criteria still refuse"
 
 # Probe 14: the feed-count probe.
+want_achieved=9; want_intents=27
+if [ "$skipped" -eq 1 ]; then want_achieved=8; want_intents=25; fi
 achieved=$(curl -fsS "$gate_url/v2/events?since=0" | "$venv_py" -c "import json,sys; e=json.load(sys.stdin)['events']; print(sum(1 for r in e if r['type']=='ACHIEVED'))")
-if [ "$achieved" = "7" ]; then pass=$((pass + 1)); echo "[PASS] durable feed: exactly 7 ACHIEVED records - one per authorized key, never a duplicate"; else fail=$((fail + 1)); echo "[FAIL] durable feed: expected exactly 7 ACHIEVED, got $achieved"; fi
+if [ "$achieved" = "$want_achieved" ]; then pass=$((pass + 1)); echo "[PASS] durable feed: exactly $want_achieved ACHIEVED records - one per authorized key, never a duplicate"; else fail=$((fail + 1)); echo "[FAIL] durable feed: expected exactly $want_achieved ACHIEVED, got $achieved"; fi
 echo "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
 # Probe 15: the recompute probe (CONTRACT.md 9.1). Both verifier twins re-derive
@@ -275,17 +342,22 @@ echo "       why it matters: consumers settle only from this observable feed - e
 go_rc=0; go_report=$("$repo/bin/intent-verify" "$data_dir/events.jsonl") || go_rc=$?
 py_rc=0; py_report=$("$venv_py" "$repo/verifier/pyverifier/verify.py" "$data_dir/events.jsonl") || py_rc=$?
 verdict=$(printf '%s\n' "$go_report" | tail -1)
-# The intent COUNT is load-bearing, not decoration: it lands on 21 rather than
-# 22 precisely because the reporting probe's unkeyable NEWT is refused BEFORE
-# it declares. Asserting it here makes that mechanical, instead of a fact
-# somebody once read in a transcript. A new declaring probe must bump it.
-if [ "$go_rc" -eq 0 ] && [ "$py_rc" -eq 0 ] && [ "$go_report" = "$py_report" ] &&    [ "${verdict#*intents=21 }" != "$verdict" ]; then
-    pass=$((pass + 1)); echo "[PASS] verifier recompute: $verdict (Go and Python reports identical; intents=21 - the unkeyable report declared nothing)"
+# The intent COUNT is load-bearing, not decoration: 27 on the full lane (25
+# when probe 17 is skipped) rather than 28 (26) precisely because the
+# reporting probe's unkeyable NEWT is refused BEFORE it declares. A new
+# declaring probe must bump it.
+if [ "$go_rc" -eq 0 ] && [ "$py_rc" -eq 0 ] && [ "$go_report" = "$py_report" ] &&    [ "${verdict#*intents=$want_intents }" != "$verdict" ]; then
+    pass=$((pass + 1)); echo "[PASS] verifier recompute: $verdict (Go and Python reports identical; intents=$want_intents - the unkeyable report declared nothing)"
 else
-    fail=$((fail + 1)); echo "[FAIL] verifier recompute: goExit=$go_rc pyExit=$py_rc verdict=$verdict (expected intents=21)"
+    fail=$((fail + 1)); echo "[FAIL] verifier recompute: goExit=$go_rc pyExit=$py_rc verdict=$verdict (expected intents=$want_intents)"
     printf '%s\n' "$go_report" | tail -3
 fi
 echo "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
 
-echo "RESULT: $pass/15 probes passed"
+total=$((17 - skipped))
+if [ "$skipped" -eq 1 ]; then
+    echo "RESULT: $pass/$total probes passed (1 skipped: provenance root needs ke-artifact-py)"
+else
+    echo "RESULT: $pass/$total probes passed"
+fi
 [ "$fail" -eq 0 ]

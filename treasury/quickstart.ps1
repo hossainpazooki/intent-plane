@@ -50,9 +50,38 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "fastmcp install failed" }
     }
 
-    Write-Host "[boot] scorer with treasury facts (balance=250, fx_rate=1.30)"
+    # The scorer's fact source is the showcase's System One adapter in REPLAY
+    # mode over the committed recording, falling back to the static facts for
+    # probes 1-15; one line per get() lands in the call log that probes 16 and
+    # 17 read. The resolver is configured only where ke-artifact-py imports
+    # (never on Windows), so the provenance probe is skipped here, visibly.
+    $callLog = Join-Path $dataDir "scorer-calls.jsonl"
+    $verifiedHash = "13a414cf7f6b25c6b6049c0953a83ff5697044aabafbd44b87e87fc4ed90f8a9"
+    $rejectedHash = "72a60976bcd55fc9a9b088cada4aae10cfbb4aabf066a8e85c403dbeae893d94"
+    # The failed import's traceback goes to stderr. Windows PowerShell 5.1
+    # turns redirected native stderr into a terminating error under
+    # ErrorActionPreference=Stop, so the probe runs under Continue and the
+    # exit code alone decides.
+    $eap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    & $venvPy -c "import ke_artifact_py" 2>$null
+    $provenance = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $eap
+    Write-Host ("[boot] scorer: static treasury facts (balance=250, fx_rate=1.30) + System One adapter in replay (provenance: {0})" -f $(if ($provenance) { "verify" } else { "skip" }))
+    $env:PYTHONPATH = if ($env:PYTHONPATH) { "$PSScriptRoot;$env:PYTHONPATH" } else { $PSScriptRoot }
     $env:SCORER_FACTS_JSON = Get-Content (Join-Path $PSScriptRoot "facts.json") -Raw
     $env:SCORER_PORT = "$scorerPort"
+    $env:SCORER_FACTS_MODULE = "scorer_ext.systemone_facts"
+    $env:SCORER_FACTS_MODE = "replay"
+    $env:SCORER_FACTS_BOOK = Join-Path $PSScriptRoot "scorer_ext\criteria.json"
+    $env:SCORER_FACTS_RECORDING = Join-Path $PSScriptRoot "recordings\systemone-jev-1.14.0.jsonl"
+    $env:SCORER_FACTS_CALL_LOG = $callLog
+    $env:SCORER_FACTS_FAULT = "reserve-audit-current"
+    if ($provenance) {
+        $env:SCORER_ARTIFACT_DIR = Join-Path $PSScriptRoot "provenance"
+        $env:SCORER_VERIFY_INPUTS_DIR = Join-Path $PSScriptRoot "provenance\inputs"
+        $env:SCORER_EXPORTED_AT_UNIX = "1750000000"
+        $env:SCORER_VERIFY_HASHES = "rule"
+    }
     $scorer = Start-Process -FilePath $venvPy -ArgumentList "-m", "scorer" -WorkingDirectory (Join-Path $repo "core\scorer") -PassThru -WindowStyle Hidden
 
     Write-Host "[boot] building the gate, the plane role CLIs, the verifier, and the declarant"
@@ -91,6 +120,9 @@ try {
     $hash03 = AttestPublish "03-over-threshold.spec.json"
     $hash05 = AttestPublish "05-thin.spec.json"
     $hash08 = AttestPublish "08-erasure-human-judgment.spec.json"
+    $hash09 = AttestPublish "09-reserve-backed.spec.json"
+    $hash10 = AttestPublish "10-reserve-shortfall.spec.json"
+    $hash11 = AttestPublish "11-reserve-audit-unbound.spec.json"
 
     $env:INTENT_SCORER_URL = $scorerUrl
     $env:INTENT_DATA_DIR = $dataDir
@@ -218,6 +250,36 @@ try {
     else { $fail++; Write-Host "[FAIL] reporting gate (live): rc=$p11Rc out=$p11line" }
     Write-Host "       why it matters: the second valuation for one UTI and date is the duplicate a trade repository will NOT reject - refused here by identity, not content; the erasure is refused by the gate's own abstention, not by adapter code"
 
+    # Probe 16 (the scored-CDM probe, CONTRACT.md 5.4 claim 21). Runs BEFORE
+    # the scorer is killed. Two witnesses per leg: call-log delta, SCORED count.
+    $p16 = (& $venvPy (Join-Path $PSScriptRoot "probes\cdm_scored_live.py") $gateUrl $hash09 $hash10 $hash11 $hash08 $callLog | Out-String).Trim()
+    $p16Rc = $LASTEXITCODE
+    $ok = ($p16Rc -eq 0) -and ($p16 -like "*scored grant: class=ACHIEVED submitted=1 calls=+1 scored_records=1*") -and
+          ($p16 -like "*scored refuse: class=POLICY_DENIED submitted=0 calls=+1 scored_records=1*") -and
+          ($p16 -like "*scored outage: class=UNEVALUABLE submitted=0 calls=+1 scored_records=1*") -and
+          ($p16 -like "*human judgment: class=HUMAN_JUDGMENT submitted=0 calls=+0 scored_records=0*")
+    $p16line = $p16 -replace "`r`n", "; " -replace "`n", "; "
+    if ($ok) { $pass++; Write-Host "[PASS] scored CDM step (live): $p16line" }
+    else { $fail++; Write-Host "[FAIL] scored CDM step (live): rc=$p16Rc out=$p16line" }
+    Write-Host "       why it matters: the judge's probability is a FACT the signed threshold decides on and never a record - a low score, an unreachable judge and a human-judgment provision each refuse, and the last one refuses with the judge never asked (calls=+0, scored_records=0)"
+
+    # Probe 17 (the provenance-root probe): needs the resolver, hence
+    # ke-artifact-py, which does not build on Windows. Skipped visibly.
+    $skipped = 0
+    if ($provenance) {
+        $p17 = (& $venvPy (Join-Path $PSScriptRoot "probes\provenance_root_live.py") $gateUrl $hash09 $callLog $verifiedHash $rejectedHash | Out-String).Trim()
+        $p17Rc = $LASTEXITCODE
+        $ok = ($p17Rc -eq 0) -and ($p17 -like "*provenance verified: class=ACHIEVED submitted=1 calls=+1 scored_records=1*") -and
+              ($p17 -like "*provenance rejected: class=UNEVALUABLE submitted=0 calls=+0 scored_records=1*")
+        $p17line = $p17 -replace "`r`n", "; " -replace "`n", "; "
+        if ($ok) { $pass++; Write-Host "[PASS] provenance root (live): $p17line" }
+        else { $fail++; Write-Host "[FAIL] provenance root (live): rc=$p17Rc out=$p17line" }
+        Write-Host "       why it matters: a criterion that cites a published rule artifact is scored only after the artifact verifies - the authoring plane is the provenance root, and an unverifiable citation never reaches the judge"
+    } else {
+        $skipped = 1
+        Write-Host "[SKIP] provenance root (live): ke-artifact-py is not importable in the scorer's python, so the resolver was not configured (Linux/WSL lane)"
+    }
+
     Write-Host "[chaos] killing the scorer to prove fail-closed on outage"
     Stop-Process -Id $scorer.Id -Force
     Start-Sleep -Milliseconds 500
@@ -227,10 +289,12 @@ try {
     Probe "attested-but-thin spec" "05-empty-criteria.json" $hash05 "FAILED" "unevaluable:empty-criteria" "thin-spec defense - attestation does not launder vacuity; zero criteria still refuse"
 
     # Probe 14: the feed-count probe.
+    $wantAchieved = if ($skipped -eq 1) { 8 } else { 9 }
+    $wantIntents = if ($skipped -eq 1) { 25 } else { 27 }
     $events = Invoke-RestMethod -Uri "$gateUrl/v2/events?since=0"
     $achieved = @($events.events | Where-Object { $_.type -eq "ACHIEVED" })
-    if ($achieved.Count -eq 7) { $pass++; Write-Host "[PASS] durable feed: exactly 7 ACHIEVED records - one per authorized key - among $($events.events.Count) events (cursor next_since=$($events.next_since))" }
-    else { $fail++; Write-Host "[FAIL] durable feed: expected exactly 7 ACHIEVED, got $($achieved.Count)" }
+    if ($achieved.Count -eq $wantAchieved) { $pass++; Write-Host "[PASS] durable feed: exactly $wantAchieved ACHIEVED records - one per authorized key - among $($events.events.Count) events (cursor next_since=$($events.next_since))" }
+    else { $fail++; Write-Host "[FAIL] durable feed: expected exactly $wantAchieved ACHIEVED, got $($achieved.Count)" }
     Write-Host "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
     # Probe 15: the recompute probe (CONTRACT.md 9.1). Both verifier twins
@@ -243,15 +307,17 @@ try {
     $pyReport = & $venvPy (Join-Path $repo "verifier\pyverifier\verify.py") (Join-Path $dataDir "events.jsonl") | Out-String
     $pyRc = $LASTEXITCODE
     $verdict = ($goReport.TrimEnd() -split "`n")[-1]
-    # The intent COUNT is load-bearing, not decoration: it lands on 21 rather
-    # than 22 precisely because the reporting probe's unkeyable NEWT is refused
-    # BEFORE it declares. Asserting it makes that mechanical instead of a fact
-    # somebody once read in a transcript. A new declaring probe must bump it.
-    if ($goRc -eq 0 -and $pyRc -eq 0 -and ($goReport -eq $pyReport) -and ($verdict -like "*intents=21 *")) { $pass++; Write-Host "[PASS] verifier recompute: $verdict (Go and Python reports identical)" }
-    else { $fail++; Write-Host "[FAIL] verifier recompute (expected intents=21): verdict=$verdict goExit=$goRc pyExit=$pyRc identical=$($goReport -eq $pyReport)"; Write-Host $goReport }
+    # The intent COUNT is load-bearing, not decoration: 27 on the full lane (25
+    # when probe 17 is skipped) rather than 28 (26) precisely because the
+    # reporting probe's unkeyable NEWT is refused BEFORE it declares. A new
+    # declaring probe must bump it.
+    if ($goRc -eq 0 -and $pyRc -eq 0 -and ($goReport -eq $pyReport) -and ($verdict -like "*intents=$wantIntents *")) { $pass++; Write-Host "[PASS] verifier recompute: $verdict (Go and Python reports identical)" }
+    else { $fail++; Write-Host "[FAIL] verifier recompute (expected intents=$wantIntents): verdict=$verdict goExit=$goRc pyExit=$pyRc identical=$($goReport -eq $pyReport)"; Write-Host $goReport }
     Write-Host "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
 
-    Write-Host ("RESULT: {0}/15 probes passed" -f $pass)
+    $total = 17 - $skipped
+    if ($skipped -eq 1) { Write-Host ("RESULT: {0}/{1} probes passed (1 skipped: provenance root needs ke-artifact-py)" -f $pass, $total) }
+    else { Write-Host ("RESULT: {0}/{1} probes passed" -f $pass, $total) }
 }
 finally {
     # Reclaim on EVERY exit path - a Wait-Healthy timeout or a transport throw

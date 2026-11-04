@@ -30,14 +30,16 @@ Run from the repo root:
 Requirements: Go and Python 3.11+. The script creates the scorer venv on
 first run, boots the scorer with `facts.json` (`balance: 250.0`,
 `fx_rate: 1.30`) injected via `SCORER_FACTS_JSON`, then runs the plane leg —
-keygen (test key authority), trust root, attest + publish the five spec
-drafts in `specs/` — builds and boots the gate with `INTENT_SCORER_URL` and
+keygen (test key authority), trust root, attest + publish the eight spec drafts in `specs/` — builds and boots the gate with `INTENT_SCORER_URL` and
 `INTENT_TRUST_ROOT`, runs the probe ladder (including a live signed
 revocation, the declarant-SDK consumption probe, the LangChain and MCP
 live legs, the reporting-gate probe, and the verifier-twin recompute), and
 tears everything down.
-Expected final line: `RESULT: 15/15 probes passed` — every probe asserts its terminal, so the
-demo doubles as a smoke gate.
+Expected final line: `RESULT: 17/17 probes passed` on a host where
+`ke-artifact-py` imports (Linux / WSL), `RESULT: 16/16 probes passed (1
+skipped: provenance root needs ke-artifact-py)` elsewhere — every probe
+asserts its terminal, a skip is printed and never counted, so the demo
+doubles as a smoke gate.
 
 ## The probe ladder
 
@@ -54,19 +56,22 @@ demo doubles as a smoke gate.
 | 9 | Call a gated `fastmcp` tool through `IntentGateMiddleware`, repeat with the SAME args, then retry those args against a SECOND, independent middleware instance (same scope/run, its own server and counter) | first: tool body executes exactly once, result returned; second: `ToolError` carrying `class=ALREADY_RESERVED`, body NOT re-fired; third: `ALREADY_RESERVED` again with the second instance's counter still 0 | the MCP gate's LIVE leg (2026-08-20), and the stateless/multi-replica claim proven live: the idempotency key is DERIVED, not remembered, so a retry landing on a replica that shares no state is refused just the same (§2.7) |
 | 10 | Front an UNGATED backend with `gated_proxy` under its own `run_id` and call it twice with the SAME args (plus a call omitting a property whose schema declares no default) | first: passes through, INNER counter 1; second: `ToolError` `class=ALREADY_RESERVED`, INNER counter still 1; the omitted-property call is refused BEFORE anything is declared (`strict_args`) | a server you do not own is gated without changing it — the INNER counter is what proves the refused call never reached the backend at all, and an unkeyable call earns no `ACHIEVED` (§2.7) |
 | 11 | Submit a valuation (VALU) through the stdlib reporting adapter (`gate_submission`), repeat with the SAME identity but DIFFERENT report bytes, declare an erasure (EROR) under a spec carrying an unresolved human-judgment entry, then declare an unkeyable NEWT (an `as_of` on a type that does not key on it) — runs while the scorer is still live, since its `balance` criterion is scored at declaration | first: submits once, repository counter 1; second: refused `ALREADY_RESERVED`, counter still 1; third: refused by the GATE `class=HUMAN_JUDGMENT`, counter unchanged; fourth: `ReportUnkeyable` BEFORE any declaration | content-blind keying proven live — the second valuation is the duplicate a trade repository will NOT reject, refused by identity, not content; the erasure is refused by the plane's own abstention, not by adapter code (§2.7) |
+| 16 | Gate a CDM `WorkflowStep` through `gate_cdm_event` on a criterion the showcase's System One (TypeSafe AI, Jev) fact source scores — replayed from `recordings/` — four times: a grant, a low score, an unreachable judge (fault-injected), and an erasure under the human-judgment spec | `ACHIEVED` with `calls=+1 scored_records=1`; `POLICY_DENIED`; `UNEVALUABLE`; `HUMAN_JUDGMENT` with `calls=+0 scored_records=0` | the judge's probability is a fact behind the unchanged `/ml/evaluate` wire and never a record; the human-judgment refusal happens with the judge never asked — two independent witnesses per leg (claim 21) |
+| 17 | Declare the same spec twice citing a rule artifact from `provenance/` by content hash: one the verifier accepts, one it rejects (Linux/WSL only; skipped visibly elsewhere) | `ACHIEVED calls=+1`; `UNEVALUABLE calls=+0` | the authoring plane is the provenance root: an unverifiable citation is refused before the judge is consulted (§2.4 `rule` mode) |
 | 12 | Kill the scorer, declare again | `FAILED` `unevaluable:` | fail-closed on outage, demonstrated live |
 | 13 | Declare an attested-but-thin spec (zero criteria) | `FAILED` `unevaluable:empty-criteria` | attestation does not launder vacuity |
-| 14 | Read `GET /v2/events?since=0` | exactly seven `ACHIEVED` — one per authorized key | emit-and-observe: consumers settle only from the feed, and no key ever settles twice |
+| 14 | Read `GET /v2/events?since=0` | exactly nine `ACHIEVED` (eight when probe 17 is skipped) — one per authorized key | emit-and-observe: consumers settle only from the feed, and no key ever settles twice |
 | 15 | Run BOTH verifier twins (`bin/intent-verify` + `verifier/pyverifier/verify.py`) over the live `events.jsonl` | `RESULT: VERIFIED`, exit 0, reports byte-identical | an independent examiner re-derives every commitment — trajectory hashes on grants AND refusals, sequence contiguity, exactly-one-ACHIEVED — from the record bytes alone, with no trust in the gate |
 
 `force_scores` (the guarded test affordance) is deliberately absent from this
 showcase — the gate here boots WITHOUT `INTENT_UNSAFE_FORCE_SCORES`, so the
 wire would refuse it anyway. The plane's spec attestation runs live above at
 test key authority (`key_authority: "test"` until production key authority
-lands, R1); what remains absent is the scorer-side verification of a signed
-artifact from the artifact plane — the scorer runs with the null resolver and
-says so on the wire (`resolver=null: verification skipped`), which is the
-honest boundary between this quickstart and the extended demonstration below.
+lands, R1). Scorer-side verification of a signed artifact from the authoring
+plane runs on the Linux/WSL lane only (probe 17, `provenance/`,
+`SCORER_VERIFY_HASHES=rule`); on Windows the scorer runs with the null
+resolver and says so on the wire (`resolver=null: verification skipped`),
+which is the honest boundary of that lane.
 
 ## The chassis flow test
 
@@ -111,7 +116,30 @@ more than Go+Python on one machine — it is documented, not scripted here:
 
 ## Facts
 
-`facts.json` is the only place treasury facts exist. The scorer's built-in
-default is an **empty** fact map — a scorer that knows nothing scores
-everything UNEVALUABLE and the gate refuses everything. Fail-closed is the
+The quickstart's scorer answers a criterion from exactly two places, both in
+this directory:
+
+- `facts.json` — the static map (`balance`, `fx_rate`) injected via
+  `SCORER_FACTS_JSON`, which the payment and reporting specs 01-08 score
+  (05, the thin spec, deliberately cites no criterion).
+- the System One (TypeSafe AI, Jev) adapter in `scorer_ext/`, loaded through
+  `SCORER_FACTS_MODULE`. It answers only the criteria its book
+  `scorer_ext/criteria.json` names — `reserve-backed`,
+  `reserve-shortfall-absent`, `reserve-audit-current`, scored by specs 09-11
+  — each judged over its evidence file in `evidence/`; every other criterion
+  falls through to `facts.json`. The quickstart runs it in `replay` mode over
+  the committed recording `recordings/systemone-jev-1.14.0.jsonl`, so it
+  never touches the network: the judge's recorded probability is the fact,
+  and the signed spec's `0.7` threshold decides. The quickstart also faults
+  `reserve-audit-current` on purpose (`SCORER_FACTS_FAULT`) — that is probe
+  16's unreachable-judge leg. `record` mode, the only one that calls the live
+  API, is an operator step with a key held outside every repository, never
+  part of the quickstart.
+
+The scorer's built-in default is an **empty** fact map — a scorer that knows
+nothing scores everything UNEVALUABLE and the gate refuses everything. The
+adapter keeps that posture: no recorded answer for a criterion's exact
+evidence bytes, an answer that is not a probability in [0, 1], or one from a
+model other than the pinned `jev-1.14.0` answers nothing, so the gate
+refuses; a missing recording refuses the scorer's boot. Fail-closed is the
 default posture; the demonstration opts *into* facts.
