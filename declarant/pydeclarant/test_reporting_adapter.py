@@ -343,7 +343,12 @@ def test_submit_is_zero_arg_and_adapter_never_sees_content():
     report bytes never pass through this module."""
     import inspect
     sig = inspect.signature(gate_submission)
-    assert list(sig.parameters) == ["identity", "submit", "client", "intent_spec_hash", "scope", "run_id"]
+    assert list(sig.parameters) == ["identity", "submit", "client", "intent_spec_hash", "scope", "run_id",
+                                    "rule_artifact_hash"]
+    # 2026-11-03: the rule-artifact passthrough is a keyword-only content
+    # ADDRESS defaulting to "" (omitted from the wire), never report content.
+    rah = sig.parameters["rule_artifact_hash"]
+    assert rah.kind is inspect.Parameter.KEYWORD_ONLY and rah.default == ""
 
 
 # --- gate_batch --------------------------------------------------------------------
@@ -478,3 +483,22 @@ def test_adapter_import_graph_is_stdlib_and_tree_local():
         if s.startswith("import ") or s.startswith("from "):
             root = s.split()[1].split(".")[0]
             assert root in allowed, "unexpected import: %s" % s
+
+
+# --- rule_artifact_hash passthrough (CONTRACT.md section 2.7, 2026-11-03) ---------
+
+
+def test_rule_artifact_hash_rides_the_declaration_and_is_omitted_when_empty():
+    repo = _Repository()
+    script = _Script([(200, ACHIEVED_BODY), (200, ACHIEVED_BODY)])
+    server, url = _serve(script)
+    try:
+        gate_submission(_valu(), repo.submitter(b"a"), Client(url),
+                        intent_spec_hash=SPEC_HASH, scope=SCOPE, run_id=RUN_ID, rule_artifact_hash="cd" * 32)
+        gate_submission(_valu(as_of="2026-08-22"), repo.submitter(b"b"), Client(url),
+                        intent_spec_hash=SPEC_HASH, scope=SCOPE, run_id=RUN_ID)
+    finally:
+        server.shutdown()
+    with_hash, without = _posted_bodies(script)
+    assert with_hash["rule_artifact_hash"] == "cd" * 32
+    assert "rule_artifact_hash" not in without

@@ -7,6 +7,8 @@ WorkflowStep (the 2026-08-21 learning). A skipped oracle is never a green one.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from cdm_adapter import (
@@ -293,3 +295,18 @@ def test_qualifier_agreement_proceeds_and_qualifier_none_is_refused():
         server.shutdown()
     assert c.n == 1 and "businessEvent" in out
     assert "qualifies as nothing" in str(exc.value)
+
+
+def test_gate_cdm_event_carries_the_rule_artifact_hash():
+    c = _Counter()
+    script = _Script([(200, ACHIEVED_BODY)], key_aware=True)
+    server, url = _serve(script)
+    try:
+        out = gate_cdm_event(_step(), c.submit, Client(url), reporting_entity=LEI, rule_set=RULES,
+                             intent_spec_hash=SPEC_HASH, scope=SCOPE, run_id=RUN_ID, timestamp_utc=TS,
+                             rule_artifact_hash="cd" * 32)
+    finally:
+        server.shutdown()
+    assert "businessEvent" in out
+    posted = [json.loads(call[2]) for call in script.calls if call[0] == "POST"]
+    assert posted[0]["rule_artifact_hash"] == "cd" * 32

@@ -157,7 +157,7 @@ def workflow_step_for(identity: ReportIdentity, *, key: str, outcome: str, reaso
 
 def gate_cdm_event(step: dict, submit, client: Client, *, reporting_entity: str, rule_set: str, intent_spec_hash,
                    scope: str, run_id: str, action_type: str | None = None, qualifier=None,
-                   timestamp_utc: str) -> dict:
+                   timestamp_utc: str, rule_artifact_hash: str = "") -> dict:
     """Gate ONE CDM step's submission and return the outcome as a CDM-shaped
     WorkflowStep (ACHIEVED with a businessEvent, or rejected with the class
     and reason). Gate refusals are RETURNED as steps, not raised: the step
@@ -168,6 +168,8 @@ def gate_cdm_event(step: dict, submit, client: Client, *, reporting_entity: str,
     the instruction QUALIFIES as, else the agent said one thing and proposed
     another and nothing is declared. The qualifier is caller-supplied so
     this module stays CDM-free; its result is compared as a string.
+    A non-empty `rule_artifact_hash` is passed through to the declaration
+    unchanged (section 2.4); this module never reads it.
     """
     identity = identity_from_workflow_step(step, reporting_entity=reporting_entity, rule_set=rule_set,
                                            action_type=action_type)
@@ -182,7 +184,8 @@ def gate_cdm_event(step: dict, submit, client: Client, *, reporting_entity: str,
     key = report_key(identity, scope=scope, run_id=run_id)
     prior = identity.prior_ref
     try:
-        gate_submission(identity, submit, client, intent_spec_hash=intent_spec_hash, scope=scope, run_id=run_id)
+        gate_submission(identity, submit, client, intent_spec_hash=intent_spec_hash, scope=scope, run_id=run_id,
+                        rule_artifact_hash=rule_artifact_hash)
     except IntentRefused as refused:
         return workflow_step_for(identity, key=key, outcome=refused.class_, reason=refused.reason,
                                  timestamp_utc=timestamp_utc, previous_event_ref=prior)

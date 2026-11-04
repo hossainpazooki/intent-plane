@@ -191,7 +191,8 @@ def _spec_hash_for(intent_spec_hash, action_type: str) -> str:
 
 
 def gate_submission(identity: ReportIdentity, submit: Callable[[], object], client: Client, *,
-                    intent_spec_hash: str | Mapping[str, str], scope: str, run_id: str) -> Submitted:
+                    intent_spec_hash: str | Mapping[str, str], scope: str, run_id: str,
+                    rule_artifact_hash: str = "") -> Submitted:
     """Declare ONE report submission and run `submit()` exactly once, only on
     a fresh synchronous Proceed. `submit` takes no arguments on purpose: the
     caller closes over the report bytes, and this module never sees them.
@@ -201,6 +202,10 @@ def gate_submission(identity: ReportIdentity, submit: Callable[[], object], clie
     every non-Proceed outcome raises IntentRefused (gating.py) with submit
     never invoked. Each invocation declares under its OWN fresh intent: the
     episode seed is the key plus a per-invocation nonce (section 2.7).
+
+    `rule_artifact_hash` (optional, 2026-11-03) rides the declaration as the
+    section 2.4 passthrough and is omitted from the wire when empty; this
+    module never reads it -- the scorer verifies it, the plane records it.
     """
     payload = canonical_identity(identity)
     spec = _spec_hash_for(intent_spec_hash, identity.action_type)
@@ -209,6 +214,7 @@ def gate_submission(identity: ReportIdentity, submit: Callable[[], object], clie
     res = client.declare(Request(
         episode_seed=seed,
         idempotency_key=key,
+        rule_artifact_hash=rule_artifact_hash,
         intent_spec_hash=spec,
         idempotency_scope=scope,
     ))
