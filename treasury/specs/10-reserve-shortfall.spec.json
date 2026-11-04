@@ -1,0 +1,1 @@
+{"spec_version":1,"action_class":"regulatory-report","enforcement_posture":"enforce","criteria":[{"name":"reserve-shortfall-absent","threshold":0.7,"volatility":"stable"}]}
