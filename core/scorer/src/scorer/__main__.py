@@ -8,14 +8,20 @@ Unset => NullResolver (verification skipped, visibly noted in basis).
 Partially set, or set without the ke-artifact-py wheel => refuse to boot: a
 server the operator configured to verify must never silently not-verify.
 
-Facts: SCORER_FACTS_JSON (a criterion -> number JSON object). Unset means an
-EMPTY fact map — every criterion is UNEVALUABLE and the gate refuses
-everything (fail-closed). A demo deployment injects its own facts file here
-(see the repo root for a worked example). Either way it is a StaticFactSource
-— static configuration, NOT a live fact source (that is a later slice; do not
-fake one).
+SCORER_VERIFY_HASHES (CONTRACT.md §2.4): "all" (default) hands the resolver
+every hash on the request; "rule" hands it rule_artifact_hash alone (the spec
+hash is the plane's own payload hash). "rule" needs the resolver block.
+
+Facts: SCORER_FACTS_JSON (a criterion -> number JSON object) builds the static
+map; unset means an EMPTY map (every criterion UNEVALUABLE, fail-closed).
+SCORER_FACTS_MODULE names an importable module whose
+fact_source_from_env(fallback) receives that static map and returns the
+FactSource the service scores from -- the only way a LIVE fact source enters
+this process. A module that does not import, or has no factory, refuses the
+boot.
 """
 
+import importlib
 import json
 import os
 
@@ -44,7 +50,19 @@ def resolver_from_env() -> ArtifactResolver | None:
     return KeArtifactResolver.from_paths(artifact_dir, inputs_dir, int(exported_at))
 
 
-def facts_from_env() -> FactSource | None:
+def verify_hashes_from_env(resolver_configured: bool) -> str:
+    mode = os.environ.get("SCORER_VERIFY_HASHES", "all")
+    if mode not in ("all", "rule"):
+        raise SystemExit("SCORER_VERIFY_HASHES must be 'all' or 'rule', got %r" % mode)
+    if mode == "rule" and not resolver_configured:
+        raise SystemExit(
+            "SCORER_VERIFY_HASHES=rule needs the resolver block (SCORER_ARTIFACT_DIR, "
+            "SCORER_VERIFY_INPUTS_DIR, SCORER_EXPORTED_AT_UNIX)"
+        )
+    return mode
+
+
+def static_facts_from_env() -> FactSource | None:
     raw = os.environ.get("SCORER_FACTS_JSON")
     if raw is None:
         return None  # create_app falls back to the empty fact map (fail-closed)
@@ -54,9 +72,29 @@ def facts_from_env() -> FactSource | None:
     return StaticFactSource({k: float(v) for k, v in facts.items()})
 
 
+def facts_from_env() -> FactSource | None:
+    static = static_facts_from_env()
+    module_name = os.environ.get("SCORER_FACTS_MODULE")
+    if module_name is None:
+        return static
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as exc:
+        raise SystemExit("SCORER_FACTS_MODULE=%r is not importable: %s" % (module_name, exc))
+    factory = getattr(module, "fact_source_from_env", None)
+    if not callable(factory):
+        raise SystemExit("SCORER_FACTS_MODULE=%r has no fact_source_from_env(fallback)" % module_name)
+    return factory(static)
+
+
 def main() -> None:
+    resolver = resolver_from_env()
     uvicorn.run(
-        create_app(facts=facts_from_env(), resolver=resolver_from_env()),
+        create_app(
+            facts=facts_from_env(),
+            resolver=resolver,
+            verify_hashes=verify_hashes_from_env(resolver is not None),
+        ),
         host=os.environ.get("SCORER_HOST", "127.0.0.1"),
         port=int(os.environ.get("SCORER_PORT", "8000")),
     )

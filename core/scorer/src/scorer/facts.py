@@ -1,7 +1,8 @@
 """Fact sources (CONTRACT.md §8).
 
 StaticFactSource is both the test double and the demo configuration. A live
-fact source is a LATER slice — do not fake one.
+fact source is loaded at boot through SCORER_FACTS_MODULE (see __main__) and
+receives the static map as its fallback; the service itself ships none.
 """
 
 from typing import Protocol

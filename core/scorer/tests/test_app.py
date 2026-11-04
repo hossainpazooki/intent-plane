@@ -163,3 +163,66 @@ def test_default_facts_are_empty_fail_closed() -> None:
     resp = client.post("/ml/evaluate", json=body())
     assert resp.status_code == 200
     assert resp.json()["result"] == "UNEVALUABLE"
+
+
+# --- SCORER_VERIFY_HASHES (CONTRACT.md §2.4 / §8, 2026-11-03) -------------------
+
+
+class RecordingResolver:
+    """ArtifactResolver that records what it was handed and verifies everything."""
+
+    def __init__(self):
+        self.calls = []
+
+    def verify(self, rule_artifact_hash, intent_spec_hash) -> bool:
+        self.calls.append((rule_artifact_hash, intent_spec_hash))
+        return True
+
+
+class CountingFacts:
+    def __init__(self):
+        self.calls = 0
+
+    def get(self, criterion: str, intent_id: str):
+        self.calls += 1
+        return 250.0
+
+
+RULE_HASH = "aa" * 32
+SPEC_HASH = "bb" * 32
+
+
+def test_rule_mode_hands_the_resolver_only_the_rule_hash():
+    res = RecordingResolver()
+    c = TestClient(create_app(facts=StaticFactSource({"alpha": 250.0}), resolver=res, verify_hashes="rule"))
+    r = c.post("/ml/evaluate", json=body(rule_artifact_hash=RULE_HASH, intent_spec_hash=SPEC_HASH))
+    assert r.json() == {"result": "PASS", "basis": "alpha=250.00 >= 100.00"}
+    assert res.calls == [(RULE_HASH, None)]
+
+
+def test_rule_mode_without_a_rule_hash_is_unbound_and_scores():
+    res = RecordingResolver()
+    c = TestClient(create_app(facts=StaticFactSource({"alpha": 250.0}), resolver=res, verify_hashes="rule"))
+    r = c.post("/ml/evaluate", json=body(intent_spec_hash=SPEC_HASH))
+    assert r.json() == {"result": "PASS", "basis": "rule-artifact: unbound; alpha=250.00 >= 100.00"}
+    assert res.calls == []
+
+
+def test_rule_mode_failed_verification_never_reaches_the_fact_source():
+    facts = CountingFacts()
+    c = TestClient(create_app(facts=facts, resolver=FalseResolver(), verify_hashes="rule"))
+    r = c.post("/ml/evaluate", json=body(rule_artifact_hash=RULE_HASH))
+    assert r.json() == {"result": "UNEVALUABLE", "basis": "artifact verification failed"}
+    assert facts.calls == 0
+
+
+def test_all_mode_is_the_default_and_hands_over_both_hashes():
+    res = RecordingResolver()
+    c = TestClient(create_app(facts=StaticFactSource({"alpha": 250.0}), resolver=res))
+    c.post("/ml/evaluate", json=body(rule_artifact_hash=RULE_HASH, intent_spec_hash=SPEC_HASH))
+    assert res.calls == [(RULE_HASH, SPEC_HASH)]
+
+
+def test_unknown_verify_mode_refuses_to_build_the_app():
+    with pytest.raises(ValueError):
+        create_app(verify_hashes="some")

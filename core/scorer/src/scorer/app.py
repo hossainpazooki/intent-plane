@@ -18,12 +18,19 @@ from .models import EvalRequest, EvalResponse
 from .resolver import ArtifactResolver, NullResolver
 
 SKIP_NOTE = "resolver=null: verification skipped; "
+UNBOUND_NOTE = "rule-artifact: unbound; "
+VERIFY_MODES = ("all", "rule")
 
 
 def create_app(
     facts: FactSource | None = None,
     resolver: ArtifactResolver | None = None,
+    verify_hashes: str = "all",
 ) -> FastAPI:
+    if verify_hashes not in VERIFY_MODES:
+        raise ValueError(
+            f"verify_hashes must be one of {VERIFY_MODES}, got {verify_hashes!r}"
+        )
     fact_source: FactSource = (
         facts if facts is not None else StaticFactSource({})
     )
@@ -41,7 +48,15 @@ def create_app(
     async def ml_evaluate(req: EvalRequest) -> EvalResponse:
         try:
             note = ""
-            if req.rule_artifact_hash or req.intent_spec_hash:
+            if verify_hashes == "rule":
+                # The spec hash is the plane's own payload hash (§2.6); no
+                # artifact store holds it, so it is never handed over.
+                to_verify = (req.rule_artifact_hash, None)
+                if not req.rule_artifact_hash:
+                    note = UNBOUND_NOTE
+            else:
+                to_verify = (req.rule_artifact_hash, req.intent_spec_hash)
+            if any(to_verify):
                 if isinstance(artifact_resolver, NullResolver):
                     # No resolver on this host: skip, but say so on the wire.
                     note = SKIP_NOTE
@@ -50,10 +65,7 @@ def create_app(
                     # impl: run it off the event loop so a concurrent
                     # /ml/evaluate is never stalled (recorded GIL caveat).
                     ok = await asyncio.get_running_loop().run_in_executor(
-                        None,
-                        artifact_resolver.verify,
-                        req.rule_artifact_hash,
-                        req.intent_spec_hash,
+                        None, artifact_resolver.verify, *to_verify
                     )
                     if not ok:
                         return EvalResponse(
