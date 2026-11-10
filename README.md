@@ -318,11 +318,13 @@ go run ./verifier/cmd/intent-verify core/contract/feed/events-tampered.jsonl  # 
 ```
 
 There is also a one-command live demonstration — a real gate and scorer, a
-15-probe ladder running keygen, attestation, revocation, declarations from
+17-probe ladder running keygen, attestation, revocation, declarations from
 both SDK languages, a gated LangChain tool, a gated MCP server, a gated MCP
 proxy fronting a server the operator does not own, a live reporting-adapter
 submission refused for a same-identity retry and for an unresolved
-human-judgment obligation, a scorer outage, and a
+human-judgment obligation, a CDM step scored by an external judge, a
+rule-artifact citation verified against the authoring plane (Linux/WSL;
+skipped visibly on Windows), a scorer outage, and a
 final recompute of the whole live feed by both verifier twins. It ships
 here now, with the showcase application in [`treasury/`](treasury/README.md),
 and boots both processes itself:
@@ -336,6 +338,10 @@ Run from this tree on 2026-09-15 it printed `RESULT: 15/15 probes passed`,
 with exactly seven `ACHIEVED` records among the 149 events it wrote and both
 verifier twins recomputing that live feed to `VERIFIED intents=21
 verified=21 refuted=0 unverifiable=0` — Go and Python reports identical.
+Re-run 2026-11-10 with the two 2026-11-03 probes (a CDM step scored by an
+external judge through the unchanged wire; the authoring plane as provenance
+root): `RESULT: 17/17 probes passed` on Linux/WSL, `16/16 (1 skipped)` on
+Windows.
 Everything above runs here too: the full suite including every
 byte-comparison and mutant pin, and the examiner's kit against its frozen
 fixture pair ([`verifier/KIT.md`](verifier/KIT.md)).
@@ -356,7 +362,7 @@ intent-plane/
 │                    #   only control/ may import it, pinned)
 ├── treasury/        # the showcase application: signed spec drafts, probe
 │                    #   payloads, the chassis flow test, and the quickstart
-│                    #   that runs the 15-probe ladder live
+│                    #   that runs the 17-probe ladder live
 ├── verifier/        # the audit side's package: Go pkg + cmd/intent-verify +
 │                    #   Python twin (pyverifier/); imports NOTHING from this
 │                    #   module outside its own tree (§7.1)
@@ -388,7 +394,7 @@ golden wire bytes, with the LangChain and MCP adapters riding on top (each
 optional; each skips visibly without its framework). Beside them, folded in
 and building green here: the plane table's three seats — drafting, attester,
 key operations — with the key-possession boundary a fact of the import
-graph, and the showcase whose 15-probe ladder is now this repo's own live
+graph, and the showcase whose 17-probe ladder is now this repo's own live
 acceptance test. Key authority is test-grade until production key authority
 lands, and every signature says so. Workload identity and record signing are staged, not built — so the
 verifier proves the record *self-consistent*, not *never-rewritten*. The
