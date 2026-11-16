@@ -31,6 +31,10 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # annotations only; the module stays stdlib-only at runtime
+    from scorer.facts import FactSource
 
 ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 MODEL = "jev-1.14.0"
@@ -50,7 +54,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # a redirect is a failure, never followed
 
 
-def load_book(path: Path) -> dict:
+def load_book(path: Path) -> dict[str, CriterionEntry]:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     book = {}
     for name, entry in raw.items():
@@ -76,7 +80,7 @@ def _probability(value):
 
 
 class SystemOneFactSource:
-    def __init__(self, book: dict, mode: str, recording_path: Path, fault: str | None = None,
+    def __init__(self, book: dict[str, CriterionEntry], mode: str, recording_path: Path, fault: str | None = None,
                  call_log: Path | None = None, fallback=None, api_key: str | None = None,
                  model: str = MODEL, endpoint: str = ENDPOINT, timeout_s: float = 3.0, opener=None) -> None:
         if mode not in MODES:
@@ -174,7 +178,7 @@ class SystemOneFactSource:
         return self._accept(answered_model, noul)
 
 
-def fact_source_from_env(fallback):
+def fact_source_from_env(fallback: FactSource | None) -> FactSource:
     """The SCORER_FACTS_MODULE factory (CONTRACT.md section 8)."""
     try:
         call_log = os.environ.get("SCORER_FACTS_CALL_LOG")
