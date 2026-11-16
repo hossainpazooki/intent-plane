@@ -310,3 +310,17 @@ def test_gate_cdm_event_carries_the_rule_artifact_hash():
     assert "businessEvent" in out
     posted = [json.loads(call[2]) for call in script.calls if call[0] == "POST"]
     assert posted[0]["rule_artifact_hash"] == "cd" * 32
+
+
+def test_gate_cdm_event_without_a_rule_artifact_hash_posts_no_field():
+    c = _Counter()
+    script = _Script([(200, ACHIEVED_BODY)], key_aware=True)
+    server, url = _serve(script)
+    try:
+        out = gate_cdm_event(_step(), c.submit, Client(url), reporting_entity=LEI, rule_set=RULES,
+                             intent_spec_hash=SPEC_HASH, scope=SCOPE, run_id=RUN_ID, timestamp_utc=TS)
+    finally:
+        server.shutdown()
+    assert "businessEvent" in out
+    posted = [json.loads(call[2]) for call in script.calls if call[0] == "POST"]
+    assert posted and "rule_artifact_hash" not in posted[0]
